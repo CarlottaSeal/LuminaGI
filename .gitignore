@@ -1,58 +1,16 @@
-# =========================
-# C++ Project Git Ignore
-# =========================
+# -----------------------------
+# Pure C++ (Visual Studio + CMake) .gitignore (with Temporary/)
+# -----------------------------
 
-# Build artifacts
-*.obj
-*.o
-*.lo
-*.la
-*.al
-*.libs
-*.dll
-*.so
-*.so.*
-*.dylib
-*.exe
-*.out
-*.app
-*.i*86
-*.x86_64
-*.hex
-
-# Static and dynamic libraries
-*.lib
-*.a
-*.la
-*.lo
-
-# Debug and release folders
-Debug/
-Release/
+# Build artifacts and temporary directories
 build/
+out/
 bin/
 lib/
-
-# Logs and temporary files
-*.log
-*.tmp
-*.bak
-*.old
-*.orig
-
-# IDE / Editor settings
-.vscode/
-.idea/
-.vs/
-*.suo
-*.user
-*.userosscache
-*.sln.docstates
-
-# OS-specific
-.DS_Store
-Thumbs.db
-Desktop.ini
+obj/
+temp/
+tmp/
+Temporary/
 
 # CMake
 CMakeFiles/
@@ -62,14 +20,66 @@ Makefile
 install_manifest.txt
 compile_commands.json
 
-# Test / Coverage / Generated
-*.gcda
-*.gcno
-*.gcov
-*.profraw
-*.profdata
+# Visual Studio generated
+.vs/
+*.VC.db
+*.VC.opendb
+*.suo
+*.user
+*.ipch
 
-# Other temporary
+# MSBuild / MSVC intermediates & logs
+*.obj
+*.iobj
+*.pch
+*.pdb
+*.ipdb
+*.idb
+*.ilk
+*.tlog
+*.lastbuildstate
+*.recipe
+*.log
+*.tlog/*
+*.cachefile
+
+# Linker/outputs
+*.exp
+*.lib
+*.dll
+*.exe
+*.app
+*.so
+*.dylib
+*.a
+*.out
+*.manifest
+*.rsp
+
+# VS project absolute file lists
+*.vcxproj.FileListAbsolute.txt
+
+# Typical config-specific dirs
+Debug/
+Release/
+RelWithDebInfo/
+MinSizeRel/
+x64/
+x86/
+
+# OS
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Editors
+.vscode/
+.idea/
+
+# Others
+*.tmp
+*.bak
+*.old
+*.orig
 *.swp
 *.swo
-*.psd
