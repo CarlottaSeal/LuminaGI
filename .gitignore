@@ -1,0 +1,75 @@
+# =========================
+# C++ Project Git Ignore
+# =========================
+
+# Build artifacts
+*.obj
+*.o
+*.lo
+*.la
+*.al
+*.libs
+*.dll
+*.so
+*.so.*
+*.dylib
+*.exe
+*.out
+*.app
+*.i*86
+*.x86_64
+*.hex
+
+# Static and dynamic libraries
+*.lib
+*.a
+*.la
+*.lo
+
+# Debug and release folders
+Debug/
+Release/
+build/
+bin/
+lib/
+
+# Logs and temporary files
+*.log
+*.tmp
+*.bak
+*.old
+*.orig
+
+# IDE / Editor settings
+.vscode/
+.idea/
+.vs/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# OS-specific
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# CMake
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+install_manifest.txt
+compile_commands.json
+
+# Test / Coverage / Generated
+*.gcda
+*.gcno
+*.gcov
+*.profraw
+*.profdata
+
+# Other temporary
+*.swp
+*.swo
+*.psd
