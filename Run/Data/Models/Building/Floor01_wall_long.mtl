@@ -1,0 +1,34 @@
+# Blender 4.5.4 LTS MTL File: 'None'
+# www.blender.org
+
+newmtl Floor_01_wall_4K.001
+Ka 1.000000 1.000000 1.000000
+Ks 0.500000 0.500000 0.500000
+Ke 0.000000 0.000000 0.000000
+Ni 1.450000
+d 1.000000
+illum 2
+map_Kd C:/Users/carlo/Perforce/ruotongg_IglooPersonal/C34/Students/ruotongg/SD/LuminaGI/Run/Data/Models/D:/Thesis/模型/中东集市建筑楼房生活环境物品人物3D模型 Grand Bazaar/FBX+OBJ/Grand_Bazaar_OBJ/Grand_Bazaar_OBJ/bake/Floor_01_wall_4K_color.jpg
+map_Ns C:/Users/carlo/Perforce/ruotongg_IglooPersonal/C34/Students/ruotongg/SD/LuminaGI/Run/Data/Models/D:/Thesis/模型/中东集市建筑楼房生活环境物品人物3D模型 Grand Bazaar/FBX+OBJ/Grand_Bazaar_OBJ/Grand_Bazaar_OBJ/bake/Floor_01_wall_4K_rough.jpg
+map_Bump C:/Users/carlo/Perforce/ruotongg_IglooPersonal/C34/Students/ruotongg/SD/LuminaGI/Run/Data/Models/D:/Thesis/模型/中东集市建筑楼房生活环境物品人物3D模型 Grand Bazaar/FBX+OBJ/Grand_Bazaar_OBJ/Grand_Bazaar_OBJ/bake/Floor_01_wall_4K_normal.jpg
+
+newmtl Pillar_01_4K.001
+Ns 360.000000
+Ka 1.000000 1.000000 1.000000
+Kd 0.800000 0.800000 0.800000
+Ks 0.500000 0.500000 0.500000
+Ke 0.000000 0.000000 0.000000
+Ni 1.000000
+d 1.000000
+illum 2
+
+newmtl Window_01-03_4K.001
+Ka 1.000000 1.000000 1.000000
+Ks 0.500000 0.500000 0.500000
+Ke 0.000000 0.000000 0.000000
+Ni 1.450000
+d 1.000000
+illum 2
+map_Kd C:/Users/carlo/Perforce/ruotongg_IglooPersonal/C34/Students/ruotongg/SD/LuminaGI/Run/Data/Models/D:/Thesis/模型/中东集市建筑楼房生活环境物品人物3D模型 Grand Bazaar/FBX+OBJ/Grand_Bazaar_OBJ/Grand_Bazaar_OBJ/4K/other_03/Window_01-03_color.jpg
+map_Ns C:/Users/carlo/Perforce/ruotongg_IglooPersonal/C34/Students/ruotongg/SD/LuminaGI/Run/Data/Models/D:/Thesis/模型/中东集市建筑楼房生活环境物品人物3D模型 Grand Bazaar/FBX+OBJ/Grand_Bazaar_OBJ/Grand_Bazaar_OBJ/4K/other_03/Window_01-03_roughness.jpg
+map_Bump C:/Users/carlo/Perforce/ruotongg_IglooPersonal/C34/Students/ruotongg/SD/LuminaGI/Run/Data/Models/D:/Thesis/模型/中东集市建筑楼房生活环境物品人物3D模型 Grand Bazaar/FBX+OBJ/Grand_Bazaar_OBJ/Grand_Bazaar_OBJ/4K/other_03/Window_01-03_normal.jpg

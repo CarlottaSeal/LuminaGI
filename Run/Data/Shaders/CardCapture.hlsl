@@ -17,6 +17,14 @@ cbuffer CardCaptureConstants : register(b10)
     uint LightMask[4];
 };
 
+cbuffer ShadowConstants : register(b6)
+{
+    float4x4 LightViewProjMatrix;
+    float ShadowMapSize;
+    float ShadowBias;
+    float2 Padding;
+};
+
 cbuffer ModelConstants : register(b9)
 {
     float4x4 ModelMatrix; 
@@ -62,6 +70,7 @@ cbuffer GeneralLightConstants : register(b4)
 };
 
 Texture2D g_textures[MAX_TEXTURE_COUNT]: register(t0);
+Texture2D<float> ShadowMap : register(t240);
 SamplerState MaterialSampler : register(s0);
 
 float RangeMap(float value, float inMin, float inMax, float outMin, float outMax)
@@ -83,6 +92,35 @@ bool IsLightEnabled(uint lightIndex)
     uint bitIndex = lightIndex % 32;
     
     return (LightMask[maskIndex] & (1u << bitIndex)) != 0;
+}
+
+float SampleShadow(float3 worldPos)
+{
+    // 变换到光源裁剪空间
+    float4 lightClipPos = mul(LightViewProjMatrix, float4(worldPos, 1.0));
+    float3 projCoords = lightClipPos.xyz / lightClipPos.w;
+    // NDC [-1,1] 转换到 UV [0,1]
+    float2 shadowUV = projCoords.xy * 0.5 + 0.5;
+    shadowUV.y = 1.0 - shadowUV.y;  // DirectX Y 翻转
+    // 边界检查 - 在阴影范围外则全亮
+    if (any(shadowUV < 0.0) || any(shadowUV > 1.0) || projCoords.z > 1.0)
+        return 1.0;
+    float currentDepth = projCoords.z;
+    // PCF 3x3 软阴影
+    float shadow = 0.0;
+    float texelSize = 1.0 / ShadowMapSize;
+    [unroll]
+    for (int x = -1; x <= 1; x++)
+    {
+        [unroll]
+        for (int y = -1; y <= 1; y++)
+        {
+            float2 offset = float2(x, y) * texelSize;
+            float shadowDepth = ShadowMap.Sample(MaterialSampler, shadowUV + offset);
+            shadow += (currentDepth - ShadowBias > shadowDepth) ? 0.0 : 1.0;
+        }
+    }
+    return shadow / 9.0;
 }
 
 struct VSInput
@@ -226,6 +264,8 @@ PSOutput CardCapturePS(PSInput input)
     float3 diffuseColor = output.albedo.rgb;
     float3 pixelNormalWorldSpace = worldNormal;
     float3 pixelToCameraDir = normalize(CameraWorldPosition - input.worldPos);
+
+    float shadow = SampleShadow(input.worldPos);
     
     float3 totalDiffuseLight = 0;
     float3 totalSpecularLight = 0;
@@ -233,14 +273,14 @@ PSOutput CardCapturePS(PSInput input)
     {
         float3 sunDir = -normalize(SunNormal);  
         float sunDiffuseDot = saturate(dot(sunDir, pixelNormalWorldSpace));
-        float3 sunDiffuseLight = sunDiffuseDot * SunColor.rgb * SunColor.a;
+        float3 sunDiffuseLight = sunDiffuseDot * SunColor.rgb * SunColor.a * shadow;
         totalDiffuseLight += sunDiffuseLight;
         
         // Specular calculation following BlinnPhong style
         float3 sunIdealReflectionDir = normalize(pixelToCameraDir + sunDir);
         float sunSpecularDot = saturate(dot(sunIdealReflectionDir, pixelNormalWorldSpace));
         float sunSpecularStrength = glossiness * SunColor.a * pow(sunSpecularDot, specularExponent);
-        float3 sunSpecularLight = sunSpecularStrength * SunColor.rgb;
+        float3 sunSpecularLight = sunSpecularStrength * SunColor.rgb * shadow;
         totalSpecularLight += sunSpecularLight;
     }
     

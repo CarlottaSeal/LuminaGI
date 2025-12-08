@@ -67,12 +67,28 @@ void Game::Startup()
 	g_theScene->CreateLightEntity("SunLight", LIGHT_DIRECTIONAL, Vec3(), Rgba8::YELLOW, Vec3(1.f, -1.f, -1.f));
 	g_theScene->CreateLightEntity("TestPoint", LIGHT_SPOT, Vec3(10.f, 0.f, 1.8f), Rgba8::WHITE, Vec3(), Rgba8::MAGENTA, 0.35f, 
 		Vec3(), 0.2f, 2.5f, 15.f, 45.f);
+
 	DebugAddWorldPoint(Vec3(10.f, 0.f, 1.8f), 0.2f, -1.f, Rgba8::MAGENTA);
 
 	//g_theScene->CreateMeshEntity("Data/Models/CornellBox", "CornellBox", Vec3(10.f, 0.f, 0.f));
 	//g_theScene->CreateMeshEntity("Data/Models/KenneyKit/building-corner", "building-corner", Vec3(10.f, 0.f, 0.f));
-	g_theScene->CreateMeshEntity("Data/Models/LewisSet/Bishop_black", "BishopBlack", Vec3(10.f, 0.f, 0.f));
-	//g_theScene->CreateMeshEntity("Data/Models/Woman", "Woman");
+	g_theScene->CreateMeshEntity("Data/Models/LewisSet/Bishop_black", "BishopBlack", Vec3(10.f, 0.5f, 0.1f), EulerAngles(180.f, 0.f, 0.f));
+	g_theScene->CreateMeshEntity("Data/Models/LewisSet/King_white", "KingWhite", Vec3(5.f, -0.5f, 0.1f), EulerAngles(180.f, 0.f, 0.f));
+	g_theScene->CreateMeshEntity("Data/Models/Building/Stone_floor", "Stone_floor", Vec3(10.f, 0.f, 2.f));
+	g_theScene->CreateMeshEntity("Data/Models/Building/Stone_floor", "Stone_floor", Vec3(8.f, 0.f, 2.f));
+	g_theScene->CreateMeshEntity("Data/Models/Building/Stone_floor", "Stone_floor", Vec3(6.f, 0.f, 2.f));
+	g_theScene->CreateMeshEntity("Data/Models/Building/Stone_floor", "Stone_floor", Vec3(10.f, 0.f, 0.f));
+	g_theScene->CreateMeshEntity("Data/Models/Building/Stone_floor", "Stone_floor", Vec3(8.f, 0.f, 0.f));
+	g_theScene->CreateMeshEntity("Data/Models/Building/Stone_floor", "Stone_floor", Vec3(6.f, 0.f, 0.f));
+	g_theScene->CreateMeshEntity("Data/Models/Building/Stone_floor", "Stone_floor", Vec3(4.f, 0.f, 0.f));
+	g_theScene->CreateMeshEntity("Data/Models/Building/Floor02_wall", "Floor02_wall", Vec3(5.f, -1.2f, 0.1f), EulerAngles(90.f, 0.f, 0.f));
+	g_theScene->CreateMeshEntity("Data/Models/Building/Floor02_wall", "Floor02_wall", Vec3(8.f, -1.2f, 0.1f), EulerAngles(90.f, 0.f, 0.f));
+	g_theScene->CreateMeshEntity("Data/Models/Building/Floor02_wall", "Floor02_wall", Vec3(5.f, 1.1f, 0.1f), EulerAngles(90.f, 0.f, 0.f));
+	g_theScene->CreateMeshEntity("Data/Models/Building/Floor02_wall", "Floor02_wall", Vec3(9.f, 1.1f, 0.1f), EulerAngles(90.f, 0.f, 0.f));
+	g_theScene->CreateMeshEntity("Data/Models/Building/Floor02_wall", "Floor02_wall", Vec3(10.5f, 0.f, 0.1f));
+
+	g_theScene->InitializeBoundsAndMeshSDF();
+	g_theScene->UpdateCardMetadata(); //这其实就是scene的初始化流程
 }
 
 void Game::Update()

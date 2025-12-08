@@ -1,0 +1,13 @@
+# Blender 4.4.3 MTL File: 'None'
+# www.blender.org
+
+newmtl Floor_02_wall_4K
+Ka 1.000000 1.000000 1.000000
+Ks 0.500000 0.500000 0.500000
+Ke 0.000000 0.000000 0.000000
+Ni 1.450000
+d 1.000000
+illum 2
+map_Kd D:/Thesis/模型/中东集市建筑楼房生活环境物品人物3D模型 Grand Bazaar/FBX+OBJ/Grand_Bazaar_OBJ/Grand_Bazaar_OBJ/bake/Floor_02_wall_4K_color.jpg
+map_Ns D:/Thesis/模型/中东集市建筑楼房生活环境物品人物3D模型 Grand Bazaar/FBX+OBJ/Grand_Bazaar_OBJ/Grand_Bazaar_OBJ/bake/Floor_02_wall_4K_rough.jpg
+map_Bump D:/Thesis/模型/中东集市建筑楼房生活环境物品人物3D模型 Grand Bazaar/FBX+OBJ/Grand_Bazaar_OBJ/Grand_Bazaar_OBJ/bake/Floor_02_wall_4K_normal.jpg
