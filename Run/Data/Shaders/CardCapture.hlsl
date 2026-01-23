@@ -1,3 +1,12 @@
+// DirectLight Debug模式 (修改此值并重新编译shader可切换)
+// 0 = 正常渲染
+// 1 = 显示Shadow值 (白=1全亮, 黑=0全阴影)
+// 2 = 显示NdotL值 (太阳光dot)
+// 3 = 显示NumLights (红色强度=光源数量/10)
+// 4 = 仅显示太阳光贡献 (禁用点光源)
+// 5 = 仅显示点光源贡献 (禁用太阳光)
+#define CARDCAPTURE_DEBUG_MODE 0
+
 #define MAX_TEXTURE_COUNT 200
 cbuffer CardCaptureConstants : register(b10)
 {
@@ -17,12 +26,15 @@ cbuffer CardCaptureConstants : register(b10)
     uint LightMask[4];
 };
 
-cbuffer ShadowConstants : register(b6)
+cbuffer ShadowConstants : register(b5)
 {
-    float4x4 LightViewProjMatrix;
+    float4x4 LightWorldToCamera;
+    float4x4 LightCameraToRender;
+    float4x4 LightRenderToClip;
     float ShadowMapSize;
     float ShadowBias;
-    float2 Padding;
+    float SoftnessFactor;
+    float LightSize;
 };
 
 cbuffer ModelConstants : register(b9)
@@ -31,7 +43,7 @@ cbuffer ModelConstants : register(b9)
     float4 ModelColor;
 };
 
-cbuffer MaterialConstants : register(b3)
+cbuffer MaterialConstants : register(b8)
 {
     int DiffuseId;
     int NormalId;
@@ -66,7 +78,7 @@ cbuffer GeneralLightConstants : register(b4)
     float4 SunColor; 
     float3 SunNormal;
     int NumLights;
-    Light LightsArray[128];  
+    Light LightsArray[15];   // 必须与 C++ 端 s_maxLights 匹配
 };
 
 Texture2D g_textures[MAX_TEXTURE_COUNT]: register(t0);
@@ -96,19 +108,30 @@ bool IsLightEnabled(uint lightIndex)
 
 float SampleShadow(float3 worldPos)
 {
-    // 变换到光源裁剪空间
-    float4 lightClipPos = mul(LightViewProjMatrix, float4(worldPos, 1.0));
+    // 检查矩阵是否有效（全零矩阵会导致问题）
+    // 如果 LightWorldToCamera 第一行为0，说明常量未正确绑定
+    if (LightWorldToCamera[0][0] == 0.0 && LightWorldToCamera[1][1] == 0.0 &&
+        LightWorldToCamera[2][2] == 0.0)
+    {
+        return 0.5;  // 返回灰色表示矩阵无效
+    }
+
+    // 变换到光源空间：World -> Camera -> Render -> Clip
+    float4 cameraPos = mul(LightWorldToCamera, float4(worldPos, 1.0));
+    float4 renderPos = mul(LightCameraToRender, cameraPos);
+    float4 lightClipPos = mul(LightRenderToClip, renderPos);
+
     float3 projCoords = lightClipPos.xyz / lightClipPos.w;
     // NDC [-1,1] 转换到 UV [0,1]
     float2 shadowUV = projCoords.xy * 0.5 + 0.5;
     shadowUV.y = 1.0 - shadowUV.y;  // DirectX Y 翻转
     // 边界检查 - 在阴影范围外则全亮
-    if (any(shadowUV < 0.0) || any(shadowUV > 1.0) || projCoords.z > 1.0)
+    if (any(shadowUV < 0.0) || any(shadowUV > 1.0) || projCoords.z > 1.0 || projCoords.z < 0.0)
         return 1.0;
     float currentDepth = projCoords.z;
     // PCF 3x3 软阴影
     float shadow = 0.0;
-    float texelSize = 1.0 / ShadowMapSize;
+    float texelSize = 1.0 / max(ShadowMapSize, 1.0);  // 防止除零
     [unroll]
     for (int x = -1; x <= 1; x++)
     {
@@ -266,16 +289,33 @@ PSOutput CardCapturePS(PSInput input)
     float3 pixelToCameraDir = normalize(CameraWorldPosition - input.worldPos);
 
     float shadow = SampleShadow(input.worldPos);
-    
+    float3 sunDir = -normalize(SunNormal);
+    float sunDiffuseDot = saturate(dot(sunDir, pixelNormalWorldSpace));
+
+    // Debug模式
+    #if CARDCAPTURE_DEBUG_MODE == 1
+        // 显示Shadow值
+        output.directLight = float4(shadow, shadow, shadow, 1.0);
+        return output;
+    #elif CARDCAPTURE_DEBUG_MODE == 2
+        // 显示NdotL值
+        output.directLight = float4(sunDiffuseDot, sunDiffuseDot, sunDiffuseDot, 1.0);
+        return output;
+    #elif CARDCAPTURE_DEBUG_MODE == 3
+        // 显示NumLights
+        output.directLight = float4(NumLights * 0.1, 0, 0, 1.0);
+        return output;
+    #endif
+
     float3 totalDiffuseLight = 0;
     float3 totalSpecularLight = 0;
-    
+
+    // 太阳光贡献
+    #if CARDCAPTURE_DEBUG_MODE != 5  // 模式5禁用太阳光
     {
-        float3 sunDir = -normalize(SunNormal);  
-        float sunDiffuseDot = saturate(dot(sunDir, pixelNormalWorldSpace));
         float3 sunDiffuseLight = sunDiffuseDot * SunColor.rgb * SunColor.a * shadow;
         totalDiffuseLight += sunDiffuseLight;
-        
+
         // Specular calculation following BlinnPhong style
         float3 sunIdealReflectionDir = normalize(pixelToCameraDir + sunDir);
         float sunSpecularDot = saturate(dot(sunIdealReflectionDir, pixelNormalWorldSpace));
@@ -283,14 +323,17 @@ PSOutput CardCapturePS(PSInput input)
         float3 sunSpecularLight = sunSpecularStrength * SunColor.rgb * shadow;
         totalSpecularLight += sunSpecularLight;
     }
-    
+    #endif
+
+    // 点光源贡献
+    #if CARDCAPTURE_DEBUG_MODE != 4  // 模式4禁用点光源
     for (int lightIndex = 0; lightIndex < NumLights; lightIndex++)
     {
         if (!IsLightEnabled(lightIndex))
             continue;
-        
+
         Light light = LightsArray[lightIndex];
-        
+
         float3 lightPos = light.WorldPosition;
         float3 lightColor = light.Color.rgb;
         float lightBrightness = light.Color.a;
@@ -299,15 +342,15 @@ PSOutput CardCapturePS(PSInput input)
         float innerPenumbraDot = light.InnerDotThreshold;
         float outerPenumbraDot = light.OuterDotThreshold;
         float ambience = light.Ambience;
-    
+
         float3 pixelToLightDisp = lightPos - input.worldPos;
         float3 pixelToLightDir = normalize(pixelToLightDisp);
         float3 lightToPixelDir = -pixelToLightDir;
         float distToLight = length(pixelToLightDisp);
-        
+
         float falloff = saturate(RangeMap(distToLight, innerRadius, outerRadius, 1.0, 0.0));
         falloff = SmoothStep3(falloff);
-        
+
         float penumbra = saturate(RangeMap(
             dot(light.SpotForward, lightToPixelDir),
             outerPenumbraDot,
@@ -316,12 +359,12 @@ PSOutput CardCapturePS(PSInput input)
             1.0
         ));
         penumbra = SmoothStep3(penumbra);
-        
-        float lightStrength = penumbra * falloff * lightBrightness * 
+
+        float lightStrength = penumbra * falloff * lightBrightness *
             saturate(RangeMap(dot(pixelToLightDir, pixelNormalWorldSpace), -ambience, 1.0, 0.0, 1.0));
         float3 diffuseLight = lightStrength * lightColor;
         totalDiffuseLight += diffuseLight;
-        
+
         float3 idealReflectionDir = normalize(pixelToCameraDir + pixelToLightDir);
         float specularDot = saturate(dot(idealReflectionDir, pixelNormalWorldSpace));
         float specularStrength = glossiness * lightBrightness * pow(specularDot, specularExponent);
@@ -329,9 +372,10 @@ PSOutput CardCapturePS(PSInput input)
         float3 specularLight = specularStrength * lightColor;
         totalSpecularLight += specularLight;
     }
-    
+    #endif
+
     float3 finalRGB = (saturate(totalDiffuseLight) * diffuseColor.rgb) + (totalSpecularLight * specularity);
-    
+
     output.directLight = float4(finalRGB, 1.0);
     
     return output;

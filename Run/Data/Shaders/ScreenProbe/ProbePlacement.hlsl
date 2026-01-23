@@ -9,6 +9,7 @@
 
 Texture2D<float>  DepthBuffer  : register(REG_DEPTH_BUFFER);   // t218
 Texture2D<float4> NormalBuffer : register(REG_GBUFFER_NORMAL); // t201
+Texture2D<float4> WorldPosBuffer : register(REG_GBUFFER_WORLDPOS); 
 
 RWStructuredBuffer<ScreenProbeGPU> ProbeBuffer : register(REG_PROBE_BUFFER_UAV); // u400
 
@@ -92,17 +93,21 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
     
     uint probeIndex = probeCoord.y * ProbeGridWidth + probeCoord.x;
     
+    // ===== 初始化整个结构体为 0 =====
+    ScreenProbeGPU probe = (ScreenProbeGPU)0;
 
     // 边界检查
     if (screenCoord.x >= ScreenWidth || screenCoord.y >= ScreenHeight)
     {
-        ScreenProbeGPU probe;
         probe.ScreenX = screenCoord.x;
         probe.ScreenY = screenCoord.y;
+        probe.Padding0 = 0;
+        probe.Padding1 = 0;
         probe.WorldPosition = float3(0, 0, 0);
-        probe.WorldNormal = float3(0, 1, 0);
         probe.Depth = 0.0f;
+        probe.WorldNormal = float3(0, 1, 0);
         probe.Validity = 0.0f;
+        ProbeBuffer[probeIndex] = probe;
         return;
     }
     
@@ -115,7 +120,7 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
     float2 screenUV = (float2(screenCoord) + 0.5f) / float2(ScreenWidth, ScreenHeight);
     
     // 重建世界坐标
-    float3 worldPos = ScreenUVToWorld(screenUV, depth);
+    float3 worldPos = WorldPosBuffer[screenCoord].xyz;
     
     // 计算有效性
     float validity = 1.0f;
@@ -131,19 +136,14 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
     }
     
     // 输出 Probe 数据
-    ScreenProbeGPU probe;
     probe.ScreenX = screenCoord.x;
     probe.ScreenY = screenCoord.y;
+    probe.Padding0 = 0;
+    probe.Padding1 = 0;
     probe.WorldPosition = worldPos;
-    probe.WorldNormal = normal;
     probe.Depth = depth;
+    probe.WorldNormal = normal;
     probe.Validity = saturate(validity);
-    ProbeBuffer[probeIndex] = probe;
-    if (probeCoord.x == 120 && probeCoord.y == 38)
-    {
-        probe.WorldPosition.x = depth;      
-        probe.WorldPosition.y = screenUV.x;
-        probe.WorldPosition.z = screenUV.y;
-    }
+    
     ProbeBuffer[probeIndex] = probe;
 }

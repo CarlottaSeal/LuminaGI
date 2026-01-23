@@ -2,6 +2,7 @@
 // MeshSDFTrace.hlsl
 // Pass 6.5: Mesh SDF Trace
 // 追踪 Mesh SDF (近距离)，命中后采样 Surface Cache Final Lighting
+// [FIXED VERSION] - 添加最小步进距离防止自相交
 //=============================================================================
 
 #include "ScreenProbeCommon.hlsli"
@@ -10,9 +11,9 @@
 #define MAX_SDF_TEXTURES 64
 #define MAX_MESH_COUNT 256
 
-//=============================================================================
-// 结构体定义 (应与 C++ 完全匹配)
-//=============================================================================
+// ===== 修复参数 =====
+#define MIN_TRACE_START_DISTANCE 0.5f  // 最小起始距离，跳过自相交
+#define DEBUG_MESH_TRACE 0              // 调试开关
 
 struct MeshSDFInfoGPU
 {
@@ -28,21 +29,33 @@ struct MeshSDFInfoGPU
     uint     Padding1;
 };
 
+// Card Metadata 结构 - 与 C++ 端精确匹配 (112 bytes)
 struct SurfaceCardMetadata
 {
-    float3 WorldOrigin;
-    float  WorldSizeX;
-    float3 WorldAxisX;
-    float  WorldSizeY;
-    float3 WorldAxisY;
-    uint   AtlasOffsetX;
-    float3 WorldNormal;
-    uint   AtlasOffsetY;
-    uint   AtlasSizeX;
-    uint   AtlasSizeY;
-    uint   MeshIndex;
-    uint   CardDirection;
-};
+    uint AtlasX;             // Atlas像素坐标X
+    uint AtlasY;             // Atlas像素坐标Y
+    uint ResolutionX;        // Card分辨率X
+    uint ResolutionY;        // Card分辨率Y   = 16 bytes
+
+    float3 Origin;           // 世界原点
+    float Padding0;          //               = 16 bytes
+
+    float3 AxisX;            // X轴方向
+    float Padding1;          //               = 16 bytes
+
+    float3 AxisY;            // Y轴方向
+    float Padding2;          //               = 16 bytes
+
+    float3 Normal;           // 法线
+    float Padding3;          //               = 16 bytes
+
+    float WorldSizeX;        // 世界尺寸X
+    float WorldSizeY;        // 世界尺寸Y
+    uint Direction;          // 方向 0-5
+    uint GlobalCardID;       //               = 16 bytes
+
+    uint4 LightMask;         // 支持128个lights = 16 bytes
+};                           // Total: 112 bytes
 
 
 // 输入 - Screen Probe 资源
@@ -87,13 +100,14 @@ float SampleMeshSDF(MeshSDFInfoGPU instance, float3 localPos)
 }
 
 //=============================================================================
-// Mesh SDF 追踪
+// Mesh SDF 追踪 [FIXED]
 //=============================================================================
 
 bool TraceSingleMeshSDF(
     float3 rayOrigin, 
     float3 rayDir, 
     float maxDist,
+    float minStartDist,    // ===== 新增：最小起始距离 =====
     MeshSDFInfoGPU instance,
     out float hitDist,
     out float3 hitNormal,
@@ -106,7 +120,7 @@ bool TraceSingleMeshSDF(
     // 变换光线到局部空间
     float3 localOrigin = mul(instance.WorldToLocal, float4(rayOrigin, 1.0f)).xyz;
     float3 localDir = normalize(mul((float3x3)instance.WorldToLocal, rayDir));
-    
+   
     float3 bmin = instance.LocalBoundsMin;
     float3 bmax = instance.LocalBoundsMax;
     
@@ -124,8 +138,13 @@ bool TraceSingleMeshSDF(
     if (tEnter > tExit || tExit < 0.0f)
         return false;
     
-    // Sphere tracing
-    float t = max(0.0f, tEnter);
+    // ===== 修复：确保起始距离不小于 minStartDist =====
+    // 这样可以跳过自相交（ray 起点就在表面上的情况）
+    float t = max(minStartDist, max(0.0f, tEnter));
+    
+    // 如果 minStartDist 已经超过了 AABB，跳过
+    if (t > tExit || t > maxDist)
+        return false;
     
     [loop]
     for (uint step = 0; step < TraceMaxSteps; step++)
@@ -170,23 +189,27 @@ bool TraceSingleMeshSDF(
 
 uint FindBestCard(MeshSDFInfoGPU instance, float3 worldNormal)
 {
-    float bestDot = -1.0f;
+    float bestDot = 1.0f;  // 找最小值（最负的dot）
     uint bestCard = 0xFFFFFFFF;
-    
+
     [loop]
     for (uint i = 0; i < instance.CardCount; i++)
     {
         uint cardIndex = instance.CardStartIndex + i;
         SurfaceCardMetadata card = CardMetadata[cardIndex];
-        
-        float d = dot(worldNormal, card.WorldNormal);
-        if (d > bestDot)
+
+        // card.Normal现在是inward-facing（指向模型内部）
+        // worldNormal是hit表面的法线（outward）
+        // 对于匹配的card，两者应该是相反的，所以dot为负
+        // 找最负的dot值（即最佳匹配）
+        float d = dot(worldNormal, card.Normal);
+        if (d < bestDot)
         {
             bestDot = d;
             bestCard = cardIndex;
         }
     }
-    
+
     return bestCard;
 }
 
@@ -198,29 +221,29 @@ float3 SampleSurfaceCacheLighting(float3 worldPos, uint cardIndex)
     SurfaceCardMetadata card = CardMetadata[cardIndex];
     
     // 世界坐标到 Card 局部 UV
-    float3 toPos = worldPos - card.WorldOrigin;
-    float u = dot(toPos, card.WorldAxisX) / card.WorldSizeX + 0.5f;
-    float v = dot(toPos, card.WorldAxisY) / card.WorldSizeY + 0.5f;
-    
+    float3 toPos = worldPos - card.Origin;
+    float u = dot(toPos, card.AxisX) / card.WorldSizeX + 0.5f;
+    float v = dot(toPos, card.AxisY) / card.WorldSizeY + 0.5f;
+
     // 边界检查
     if (u < 0.0f || u > 1.0f || v < 0.0f || v > 1.0f)
         return float3(0, 0, 0);
-    
+
     // 计算 Atlas 中的 UV
     float atlasWidth = float(AtlasWidth);
     float atlasHeight = float(AtlasHeight);
-    
+
     float2 atlasUV = float2(
-        (float(card.AtlasOffsetX) + u * float(card.AtlasSizeX)) / atlasWidth,
-        (float(card.AtlasOffsetY) + v * float(card.AtlasSizeY)) / atlasHeight
+        (float(card.AtlasX) + u * float(card.ResolutionX)) / atlasWidth,
+        (float(card.AtlasY) + v * float(card.ResolutionY)) / atlasHeight
     );
-    
-    // 采样 Surface Cache (layer 0 = final lighting)
-    return SurfaceCacheAtlas.SampleLevel(LinearSampler, float3(atlasUV, 0), 0).rgb;
+
+    // 采样 Surface Cache (layer 5 = Combined Light = Direct + Indirect)
+    return SurfaceCacheAtlas.SampleLevel(LinearSampler, float3(atlasUV, 5), 0).rgb;
 }
 
 //=============================================================================
-// 主计算着色器
+// 主计算着色器 [FIXED]
 //=============================================================================
 
 [numthreads(64, 1, 1)]
@@ -238,12 +261,11 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
     ScreenProbeGPU probe = ProbeBuffer[probeIndex];
     
     // 初始化输出
-    TraceResult result;
-    result.HitPosition = float3(0, 0, 0);
-    result.HitDistance = MeshSDFTraceDistance;  // 近距离追踪最大距离
-    result.HitNormal = float3(0, 1, 0);
-    result.Validity = 0.0f;
-    
+    TraceResult result = (TraceResult)0;  
+    result.HitDistance = MeshSDFTraceDistance; 
+    result.HitNormal = float3(0, 1, 0);        
+    result.HitCardIndex = 0xFFFFFFFF;  
+   
     if (probe.Validity <= 0.0f)
     {
         MeshTraceResults[globalIndex] = result;
@@ -252,7 +274,9 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
     
     ImportanceSampleGPU sampleData = SampleDirections[globalIndex];
     
-    float3 rayOrigin = probe.WorldPosition + probe.WorldNormal * RayBias;
+    // ===== 修复：增大 RayBias =====
+    float effectiveBias = max(RayBias, 1.0f);  // 确保至少 1.0
+    float3 rayOrigin = probe.WorldPosition + probe.WorldNormal * effectiveBias;
     float3 rayDir = sampleData.Direction;
     
     if (length(rayDir) < 0.001f)
@@ -261,8 +285,22 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
         return;
     }
     
+    rayDir = normalize(rayDir);
+    
+    // ===== DEBUG: 输出 ray 信息 =====
+#if DEBUG_MESH_TRACE
+    if (globalIndex == 643587)
+    {
+        result.HitPosition = rayOrigin;
+        result.HitNormal = rayDir;
+        result.HitDistance = effectiveBias;
+        result.Validity = 999.0f;  // 标记为调试
+        MeshTraceResults[globalIndex] = result;
+        return;
+    }
+#endif
+    
     // 使用 Global SDF 快速剔除
-    // Global SDF 存储了最近的实例索引，可以优先追踪
     float3 sdfUV = (rayOrigin - GlobalSDFCenter) * GlobalSDFInvExtent + 0.5f;
     float2 globalSDFData = float2(1000.0f, -1.0f);
     
@@ -278,8 +316,8 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
     uint closestCard = 0xFFFFFFFF;
     bool anyHit = false;
     
-    // 如果 Global SDF 有有效的实例索引，优先追踪那个
-    int priorityInstance = int(globalSDFData.y);
+    // ===== 修复：最小起始距离，防止自相交 =====
+    float minStartDistance = MIN_TRACE_START_DISTANCE;
     
     [loop]
     for (uint meshIndex = 0; meshIndex < MAX_MESH_COUNT; meshIndex++)
@@ -294,7 +332,9 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
         float3 hitNormal;
         uint hitCardIndex;
         
-        if (TraceSingleMeshSDF(rayOrigin, rayDir, closestDist, instance, hitDist, hitNormal, hitCardIndex))
+        // ===== 传入 minStartDistance =====
+        if (TraceSingleMeshSDF(rayOrigin, rayDir, closestDist, minStartDistance, 
+                               instance, hitDist, hitNormal, hitCardIndex))
         {
             if (hitDist < closestDist)
             {
@@ -313,9 +353,7 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
         result.HitDistance = closestDist;
         result.HitNormal = closestNormal;
         result.Validity = 1.0f;
-        
-        // 可选：直接在这里采样 Surface Cache 光照
-        // float3 radiance = SampleSurfaceCacheLighting(closestHitPos, closestCard);
+        result.HitCardIndex = closestCard;  
     }
     
     MeshTraceResults[globalIndex] = result;

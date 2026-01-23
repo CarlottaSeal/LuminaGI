@@ -89,17 +89,66 @@ bool TraceGlobalSDF(
 }
 
 //=============================================================================
-// 从 Voxel Lighting 采样
+// 从 Voxel Lighting 采样 (作为fallback)
 //=============================================================================
 
 float3 SampleVoxelLightingAtPosition(float3 worldPos)
 {
-    float3 voxelUV = (worldPos - GlobalSDFCenter) / (GlobalSDFExtent * 2.0f) + 0.5f;
-    
+    // 使用与 InjectVoxelLighting 一致的坐标系统
+    float3 voxelUV = (worldPos - SceneBoundsMin) / (SceneBoundsMax - SceneBoundsMin);
+
     if (any(voxelUV < 0.0f) || any(voxelUV > 1.0f))
         return float3(0, 0, 0);
-    
+
     return VoxelLighting.SampleLevel(LinearSampler, voxelUV, 0).rgb;
+}
+
+//=============================================================================
+// 从 Surface Cache 采样光照 (主要方法)
+//=============================================================================
+
+float3 SampleSurfaceCacheLighting(float3 hitPos)
+{
+    // 遍历所有Card，找到包含hitPos的那个
+    [loop]
+    for (uint i = 0; i < ActiveCardCount; i++)
+    {
+        SurfaceCardMetadata card = CardMetadataBuffer[i];
+
+        // 计算hitPos在Card局部空间的坐标
+        float3 offset = hitPos - card.Origin;
+        float localX = dot(offset, card.AxisX);
+        float localY = dot(offset, card.AxisY);
+        float localZ = dot(offset, card.Normal);
+
+        // 检查是否在Card范围内
+        float halfSizeX = card.WorldSize.x * 0.5f;
+        float halfSizeY = card.WorldSize.y * 0.5f;
+
+        if (abs(localX) <= halfSizeX && abs(localY) <= halfSizeY && abs(localZ) < 1.0f)
+        {
+            // 计算UV
+            float2 uv = float2(localX / card.WorldSize.x + 0.5f, localY / card.WorldSize.y + 0.5f);
+            uv = saturate(uv);
+
+            // 计算Atlas坐标
+            float2 atlasUV = (float2(card.AtlasX, card.AtlasY) + uv * float2(card.ResolutionX, card.ResolutionY)) / float2(AtlasWidth, AtlasHeight);
+
+            // 采样CombinedLight层 (Layer 5)
+            float3 lighting = SurfaceCacheAtlas.SampleLevel(LinearSampler, float3(atlasUV, LAYER_COMBINED), 0).rgb;
+
+            // 如果CombinedLight为0，尝试采样DirectLight层
+            if (dot(lighting, lighting) < 0.0001f)
+            {
+                lighting = SurfaceCacheAtlas.SampleLevel(LinearSampler, float3(atlasUV, LAYER_DIRECT_LIGHT), 0).rgb;
+            }
+
+            return lighting;
+        }
+    }
+
+    // 没找到Card，fallback到VoxelLighting
+    return SampleVoxelLightingAtPosition(hitPos);
 }
 
 //=============================================================================
@@ -172,27 +221,32 @@ float3 GetHemisphereDirection(uint rayIndex, uint probeIndex, float3 normal)
 void main(uint3 DispatchThreadID : SV_DispatchThreadID)
 {
     uint2 probeCoord = DispatchThreadID.xy;
-    
+
     if (probeCoord.x >= ProbeGridWidth || probeCoord.y >= ProbeGridHeight)
         return;
-    
+
     // Probe 对应的 Atlas 中心像素
     uint probeSpacingInt = (uint)ProbeSpacing;
     uint2 atlasCenter = probeCoord * probeSpacingInt + probeSpacingInt / 2;
-    
+
     // 查找 Probe 所在的 Card
     uint cardIndex = FindCardAtAtlasPixel(atlasCenter);
-    
+
     if (cardIndex == 0xFFFFFFFF)
     {
         RadiosityTraceResult[probeCoord] = float4(0, 0, 0, 0);
         return;
     }
-    
+
     // 重建世界坐标和法线
     float3 worldPos = ReconstructWorldPosition(atlasCenter, cardIndex);
-    float3 normal = CardMetadataBuffer[cardIndex].Normal;
-    float3 rayOrigin = worldPos + normal * RayBias;
+
+    // 从SurfaceCache的Normal层采样真实的表面法线
+    float4 normalData = SurfaceCacheAtlas.Load(int4(atlasCenter, LAYER_NORMAL, 0));
+    float3 traceNormal = normalData.xyz * 2.0f - 1.0f;  // [0,1] -> [-1,1]
+    traceNormal = SafeNormalize(traceNormal);
+
+    float3 rayOrigin = worldPos + traceNormal * RayBias;
     
     // 累积光照
     float3 totalRadiance = float3(0, 0, 0);
@@ -204,7 +258,7 @@ void main(uint3 DispatchThreadID : SV_DispatchThreadID)
     [loop]
     for (uint rayIdx = 0; rayIdx < RaysPerProbe; rayIdx++)
     {
-        float3 rayDir = GetHemisphereDirection(rayIdx, probeIndex, normal);
+        float3 rayDir = GetHemisphereDirection(rayIdx, probeIndex, traceNormal);
         float3 radiance = float3(0, 0, 0);
         
         // 追踪 Global SDF
@@ -212,19 +266,49 @@ void main(uint3 DispatchThreadID : SV_DispatchThreadID)
         float3 hitPos;
         bool hit = TraceGlobalSDF(rayOrigin, rayDir, TraceMaxDistance, hitDist, hitPos);
         
+        // 调试模式：设为1-4来诊断问题
+        // 0 = 正常模式
+        // 1 = 固定亮色（验证管线是否工作）
+        // 2 = 显示hit/miss（绿=hit，红=miss）
+        // 3 = 显示VoxelLighting采样值
+        // 4 = 显示SurfaceCache采样值
+        #define RADIOSITY_DEBUG_MODE 0
+
         if (hit)
         {
-            // 命中：采样 Voxel Lighting
-            radiance = SampleVoxelLightingAtPosition(hitPos);
+            #if RADIOSITY_DEBUG_MODE == 1
+                radiance = float3(0.5, 0.3, 0.1);  // 固定暖色
+            #elif RADIOSITY_DEBUG_MODE == 2
+                radiance = float3(0, 1, 0);  // 绿色=命中
+            #elif RADIOSITY_DEBUG_MODE == 3
+                radiance = SampleVoxelLightingAtPosition(hitPos);
+                // 如果VoxelLighting为空，显示品红
+                if (dot(radiance, radiance) < 0.0001f)
+                    radiance = float3(1, 0, 1);
+            #elif RADIOSITY_DEBUG_MODE == 4
+                radiance = SampleSurfaceCacheLighting(hitPos);
+            #else
+                // 正常模式：采样 VoxelLighting
+                radiance = SampleVoxelLightingAtPosition(hitPos);
+                // 如果 VoxelLighting 为空，fallback 到 Surface Cache
+                if (dot(radiance, radiance) < 0.0001f)
+                {
+                    radiance = SampleSurfaceCacheLighting(hitPos);
+                }
+            #endif
         }
         else
         {
-            // 未命中：天空光
-            radiance = SampleSkyLight(rayDir, SkyIntensity);
+            #if RADIOSITY_DEBUG_MODE == 2
+                radiance = float3(1, 0, 0);  // 红色=未命中
+            #else
+                // 未命中：天空光
+                radiance = SampleSkyLight(rayDir, SkyIntensity);
+            #endif
         }
         
         // Cosine 加权
-        float cosWeight = max(0.0f, dot(rayDir, normal));
+        float cosWeight = max(0.0f, dot(rayDir, traceNormal));
         totalRadiance += radiance * cosWeight;
         totalWeight += cosWeight;
     }
@@ -232,13 +316,13 @@ void main(uint3 DispatchThreadID : SV_DispatchThreadID)
     // 归一化
     if (totalWeight > 0.001f)
         totalRadiance /= totalWeight;
-    
+
     // 时间累积
     float4 history = RadiosityHistory[probeCoord];
     if (history.w > 0.0f)
     {
         totalRadiance = lerp(history.rgb, totalRadiance, TemporalBlendFactor);
     }
-    
+
     RadiosityTraceResult[probeCoord] = float4(totalRadiance, 1.0f);
 }
