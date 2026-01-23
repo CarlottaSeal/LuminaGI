@@ -11,10 +11,21 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Data", "Data", "{007747DF-D
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Shaders", "Shaders", "{2FCDE15E-A9F5-45C0-A33D-733F5F4728EE}"
 	ProjectSection(SolutionItems) = preProject
+		Run\Data\Shaders\BuildGlobalSDF.hlsl = Run\Data\Shaders\BuildGlobalSDF.hlsl
+		Run\Data\Shaders\BuildVoxelVisibility.hlsl = Run\Data\Shaders\BuildVoxelVisibility.hlsl
 		Run\Data\Shaders\CardCapture.hlsl = Run\Data\Shaders\CardCapture.hlsl
 		Run\Data\Shaders\CompositeShader.hlsl = Run\Data\Shaders\CompositeShader.hlsl
-		Run\Data\Shaders\SurfaceCacheExtract.hlsl = Run\Data\Shaders\SurfaceCacheExtract.hlsl
+		Run\Data\Shaders\InjectVoxelLighting.hlsl = Run\Data\Shaders\InjectVoxelLighting.hlsl
 		Run\Data\Shaders\RadianceCacheUpdate.hlsl = Run\Data\Shaders\RadianceCacheUpdate.hlsl
+		Run\Data\Shaders\SampleVoxelLighting.hlsli = Run\Data\Shaders\SampleVoxelLighting.hlsli
+		Run\Data\Shaders\SDFGeneration.hlsl = Run\Data\Shaders\SDFGeneration.hlsl
+		Run\Data\Shaders\Shadow.hlsl = Run\Data\Shaders\Shadow.hlsl
+		Run\Data\Shaders\VoxelSceneCommon.hlsli = Run\Data\Shaders\VoxelSceneCommon.hlsli
+		Run\Data\Shaders\BlinnPhong.hlsl = Run\Data\Shaders\BlinnPhong.hlsl
+		Run\Data\Shaders\RadiosityConvertToSH.hlsl = Run\Data\Shaders\RadiosityConvertToSH.hlsl
+		Run\Data\Shaders\RadiosityFilter.hlsl = Run\Data\Shaders\RadiosityFilter.hlsl
+		Run\Data\Shaders\RadiosityIntegrateSH.hlsl = Run\Data\Shaders\RadiosityIntegrateSH.hlsl
+		Run\Data\Shaders\RadiosityTrace.hlsl = Run\Data\Shaders\RadiosityTrace.hlsl
 	EndProjectSection
 EndProject
 Global

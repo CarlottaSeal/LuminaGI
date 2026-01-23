@@ -27,6 +27,7 @@ public:
 public:
 	bool m_openDevConsole = false;
 	bool m_isInAttractMode;
+	bool m_mouseFPS = false;
 	Clock* m_gameClock;
 	//Camera m_gameCamera;
 	Camera m_screenCamera;
@@ -50,6 +51,7 @@ private:
 
 	bool m_hasPlayedAttractSound = false;
 	SoundPlaybackID m_attractSoundID = MISSING_SOUND_ID;
+
 
 	float m_varyTime = 0.f;
 

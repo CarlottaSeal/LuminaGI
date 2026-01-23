@@ -1,3 +1,5 @@
+#include "ShadowPCF.hlsli"
+
 cbuffer CameraConstants : register(b1)
 {
     float4x4 WorldToCameraTransform;
@@ -7,54 +9,88 @@ cbuffer CameraConstants : register(b1)
     float CameraPadding;
 };
 
-cbuffer RadianceCacheConstants : register(b13)
+cbuffer CompositeConstants : register(b12)
 {
-    uint RC_MaxProbes;
-    uint RC_ActiveProbeCount;
-    uint RC_UpdateProbeCount;
-    uint RC_RaysPerProbe;
-    
-    float3 RC_CameraPosition;
-    float RC_Padding0;
-    
-    float4x4 RC_ViewProj;
-    float4x4 RC_ViewProjInverse;
-    
-    float RC_ScreenWidth;
-    float RC_ScreenHeight;
-    uint RC_CurrentFrame;
-    float RC_TemporalBlend;
+    float4x4 ClipToRenderTransform;
+    float4x4 RenderToCameraTransform;
+    float4x4 CameraToWorldTransform;
+
+    float ScreenWidth;
+    float ScreenHeight;
+    float IndirectIntensity;
+    float DirectIntensity;
+
+    float4 SunColor;  // xyz = color, w = intensity
+
+    float3 SunNormal;
+    float AmbientIntensity;
+
+    float3 AmbientColor;
+    float ShadowBias;
+
+    float4x4 LightWorldToCamera;
+    float4x4 LightCameraToRender;
+    float4x4 LightRenderToClip;
+
+    float ShadowMapSize;
+    float AOStrength;
+    float SoftnessFactor;
+    float LightSize;
 };
 
-struct RadianceProbeGPU
+//=============================================================================
+// 点光源/聚光灯
+//=============================================================================
+struct Light
 {
+    float4 Color;           // rgb = color, a = intensity
     float3 WorldPosition;
-    float Pad0;
-    
-    float SH_R[9];
-    float SH_G[9];
-    float SH_B[9];
-    
-    uint LastUpdateFrame;
-    float Validity;
-    float Weight;
-    float Pad1;
+    float PADDING;
+    float3 SpotForward;
+    float Ambience;
+    float InnerRadius;
+    float OuterRadius;
+    float InnerDotThreshold;
+    float OuterDotThreshold;
 };
 
-Texture2D<float4> g_GBufferAlbedo : register(t200);
-Texture2D<float4> g_GBufferNormal : register(t201);
-Texture2D<float4> g_GBufferMaterial : register(t202);
-Texture2D<float4> g_GBufferMotion : register(t203);
+cbuffer GeneralLightConstants : register(b4)
+{
+    float4 SunColorAlt;     // 已经在 CompositeConstants 中有了，这里可以忽略
+    float3 SunNormalAlt;
+    int NumLights;
+    Light LightsArray[15];  // 必须与 C++ 端 s_maxLights 匹配！
+};
 
-Texture2D<float> g_DepthBuffer : register(t204);
+//=============================================================================
+// GBuffer (t200-t204)
+//=============================================================================
+Texture2D<float4> g_GBufferAlbedo   : register(t200);  
+Texture2D<float4> g_GBufferNormal   : register(t201);  
+Texture2D<float4> g_GBufferMaterial : register(t202);  
+Texture2D<float4> g_GBufferMotion   : register(t203);  
+Texture2D<float>  g_DepthBuffer     : register(t204);  
 
-Texture2DArray<float4> g_SurfaceCacheAtlas : register(t205);
+//=============================================================================
+// Shadow Map (t240)
+//=============================================================================
+Texture2D<float> g_ShadowMap : register(t240);
 
-StructuredBuffer<RadianceProbeGPU> g_RadianceProbes : register(t209);
+//=============================================================================
+// Screen Probe 间接光照 (t241)
+//=============================================================================
+Texture2D<float4> g_ScreenIndirectLighting : register(t241);
 
-SamplerState PointSampler : register(s0);
+//=============================================================================
+// Samplers
+//=============================================================================
+SamplerState PointSampler  : register(s0);
 SamplerState LinearSampler : register(s1);
+SamplerComparisonState ShadowSampler : register(s2);  
 
+//=============================================================================
+// Vertex Shader
+//=============================================================================
 struct VSOutput
 {
     float4 Position : SV_POSITION;
@@ -64,190 +100,197 @@ struct VSOutput
 VSOutput CompositeVS(uint vertexID : SV_VertexID)
 {
     VSOutput output;
-    
     float2 uv = float2((vertexID << 1) & 2, vertexID & 2);
     output.TexCoord = uv;
     output.Position = float4(uv * float2(2, -2) + float2(-1, 1), 0, 1);
-    
     return output;
 }
 
-// 从深度重建世界坐标
 float3 ReconstructWorldPosition(float2 uv, float depth)
 {
-    float4 ndc = float4(uv * 2.0 - 1.0, depth, 1.0);
-    ndc.y = -ndc.y;  // Flip Y
+    float4 clipPos = float4(uv * 2.0 - 1.0, depth, 1.0);
+    clipPos.y = -clipPos.y;
     
-    float4 worldPos = mul(RC_ViewProjInverse, ndc);
-    worldPos /= worldPos.w;
+    float4 renderPos = mul(ClipToRenderTransform, clipPos);
+    float4 cameraPos = mul(RenderToCameraTransform, renderPos);
+    float4 worldPos = mul(CameraToWorldTransform, cameraPos);
     
-    return worldPos.xyz;
+    return worldPos.xyz / worldPos.w;
 }
 
-// 评估 SH 基函数
-void EvaluateSHBasis(float3 dir, out float basis[9])
+float3 DecodeNormal(float3 encoded)
 {
-    basis[0] = 0.282095;
-    basis[1] = 0.488603 * dir.y;
-    basis[2] = 0.488603 * dir.z;
-    basis[3] = 0.488603 * dir.x;
-    basis[4] = 1.092548 * dir.x * dir.y;
-    basis[5] = 1.092548 * dir.y * dir.z;
-    basis[6] = 0.315392 * (3.0 * dir.z * dir.z - 1.0);
-    basis[7] = 1.092548 * dir.x * dir.z;
-    basis[8] = 0.546274 * (dir.x * dir.x - dir.y * dir.y);
+    return normalize(encoded * 2.0 - 1.0);
 }
 
-// 从 SH 系数评估辐射度
-float3 EvaluateSH(float sh_r[9], float sh_g[9], float sh_b[9], float3 dir)
+float SampleShadowMapPCF(float3 worldPos, float3 normal)
 {
-    float basis[9];
-    EvaluateSHBasis(dir, basis);
-    
-    float3 result = 0;
-    
+    float4x4 lightViewProj = mul(LightRenderToClip, mul(LightCameraToRender, LightWorldToCamera));
+
+    // 计算 NdotL
+    float NdotL = saturate(dot(normal, -SunNormal));
+
+    // 不用法线偏移，直接变换
+    float4 lightSpacePos = mul(lightViewProj, float4(worldPos, 1.0f));
+    lightSpacePos.xyz /= lightSpacePos.w;
+    float2 shadowUV = lightSpacePos.xy * 0.5f + 0.5f;
+    shadowUV.y = 1.0f - shadowUV.y;
+
+    if (any(shadowUV < 0.0f) || any(shadowUV > 1.0f))
+        return 1.0f;
+
+    float receiverDepth = lightSpacePos.z;
+    // 硬件已经有 depth bias，这里只需要很小的额外偏移
+    float bias = 0.001f;
+    receiverDepth -= bias;
+
+    // 使用 5x5 PCF 采样减少闪烁
+    float texelSize = 1.0f / ShadowMapSize;
+
+    // Snap采样中心到texel中心，减少sub-texel抖动
+    float2 snappedUV = (floor(shadowUV * ShadowMapSize) + 0.5f) / ShadowMapSize;
+
+    float shadow = 0.0f;
+
     [unroll]
-    for (int i = 0; i < 9; i++)
+    for (int x = -2; x <= 2; ++x)
     {
-        result.r += sh_r[i] * basis[i];
-        result.g += sh_g[i] * basis[i];
-        result.b += sh_b[i] * basis[i];
-    }
-    
-    return max(result, 0);
-}
-
-float3 SampleRadianceCache(float3 worldPos, float3 normal)
-{
-    //找到最近的 4-8 个 Probes
-    const int MAX_PROBES = 8;
-    int nearbyIndices[MAX_PROBES];
-    float distances[MAX_PROBES];
-    
-    [unroll]
-    for (int i = 0; i < MAX_PROBES; i++)
-    {
-        nearbyIndices[i] = -1;
-        distances[i] = 1e10;
-    }
-    
-    // active probes（简化版：实际应该用空间数据结构）
-    for (uint i = 0; i < RC_ActiveProbeCount && i < RC_MaxProbes; i++)
-    {
-        RadianceProbeGPU probe = g_RadianceProbes[i];
-        
-        float dist = distance(worldPos, probe.WorldPosition);
-        
-        // 插入到最近的 8 个
         [unroll]
-        for (int k = 0; k < MAX_PROBES; k++)
+        for (int y = -2; y <= 2; ++y)
         {
-            if (dist < distances[k])
-            {
-                // Shift
-                for (int m = MAX_PROBES - 1; m > k; m--)
-                {
-                    distances[m] = distances[m - 1];
-                    nearbyIndices[m] = nearbyIndices[m - 1];
-                }
-                distances[k] = dist;
-                nearbyIndices[k] = i;
-                break;
-            }
+            float2 offset = float2(x, y) * texelSize;
+            shadow += g_ShadowMap.SampleCmpLevelZero(ShadowSampler, snappedUV + offset, receiverDepth);
         }
     }
-    
-    float3 totalRadiance = 0;
-    float totalWeight = 0;
-    
-    [unroll]
-    for (int j = 0; j < MAX_PROBES; j++)
-    {
-        if (nearbyIndices[j] < 0)
-            continue;
-        
-        RadianceProbeGPU probe = g_RadianceProbes[nearbyIndices[j]];
-        
-        // ✅ 从 SH 评估法线方向的辐射度
-        float3 probeRadiance = EvaluateSH(
-            probe.SH_R,
-            probe.SH_G,
-            probe.SH_B,
-            normal
-        );
-        
-        // ✅ 距离权重（inverse distance）
-        float weight = 1.0 / (distances[j] + 0.1);
-        
-        totalRadiance += probeRadiance * weight * probe.Validity;
-        totalWeight += weight * probe.Validity;
-    }
-    
-    if (totalWeight > 0.01)
-        return totalRadiance / totalWeight;
-    
-    return float3(0, 0, 0);
+
+    return shadow / 25.0f;
 }
 
-float3 SampleSurfaceCache(float3 worldPos, float3 normal)
+float RangeMap(float value, float inMin, float inMax, float outMin, float outMax)
 {
-    // ⚠️ 这个函数是可选的，用于直接可视化 Surface Cache
-    // 实际上 GBuffer 已经包含了直接光照信息（如果在 GBuffer Pass 计算了）
-    // 或者我们在 Card Capture 时已经计算了直接光照
-    
-    // 这里简化为返回 0（因为我们已经在 Card Capture 计算了直接光照）
-    // 如果需要可视化，可以实现 Card 查询逻辑
-    
-    return float3(0, 0, 0);
+    return outMin + (value - inMin) * (outMax - outMin) / (inMax - inMin);
 }
 
+float SmoothStep3(float t)
+{
+    return t * t * (3.0 - 2.0 * t);
+}
+
+float3 CalculateDirectLighting(float3 worldPos, float3 normal, float3 albedo, float shadow)
+{
+    // 太阳光
+    float NdotL = saturate(dot(normal, -SunNormal));
+    float3 sunLight = SunColor.rgb * SunColor.a * NdotL * shadow;
+    float3 ambient = AmbientColor * AmbientIntensity;
+
+    float3 totalLight = sunLight + ambient;
+
+    // 点光源/聚光灯
+    for (int i = 0; i < NumLights; i++)
+    {
+        Light light = LightsArray[i];
+
+        float3 lightPos = light.WorldPosition;
+        float3 lightColor = light.Color.rgb;
+        float lightBrightness = light.Color.a;  // 已经是 0.0-1.0 范围
+        float innerRadius = light.InnerRadius;
+        float outerRadius = light.OuterRadius;
+        float innerPenumbraDot = light.InnerDotThreshold;
+        float outerPenumbraDot = light.OuterDotThreshold;
+        float ambience = light.Ambience;
+
+        float3 pixelToLightDisp = lightPos - worldPos;
+        float3 pixelToLightDir = normalize(pixelToLightDisp);
+        float3 lightToPixelDir = -pixelToLightDir;
+        float distToLight = length(pixelToLightDisp);
+
+        // 距离衰减
+        float falloff = saturate(RangeMap(distToLight, innerRadius, outerRadius, 1.0, 0.0));
+        falloff = SmoothStep3(falloff);
+
+        // 聚光灯角度衰减
+        float penumbra = 1.0;
+        if (length(light.SpotForward) > 0.01)
+        {
+            penumbra = saturate(RangeMap(
+                dot(light.SpotForward, lightToPixelDir),
+                outerPenumbraDot,
+                innerPenumbraDot,
+                0.0,
+                1.0
+            ));
+            penumbra = SmoothStep3(penumbra);
+        }
+
+        // 漫反射
+        float lightStrength = penumbra * falloff * lightBrightness *
+            saturate(RangeMap(dot(pixelToLightDir, normal), -ambience, 1.0, 0.0, 1.0));
+
+        totalLight += lightStrength * lightColor;
+    }
+
+    return albedo * totalLight;
+}
+
+float3 GetSkyColor(float3 viewDir)
+{
+    return float3(0.0, 0.0, 0.0);  // 纯黑天空
+}
+
+float3 ToneMapACES(float3 color)
+{
+    const float a = 2.51, b = 0.03, c = 2.43, d = 0.59, e = 0.14;
+    return saturate((color * (a * color + b)) / (color * (c * color + d) + e));
+}
+
+//=============================================================================
+// Pixel Shader
+//=============================================================================
 
 float4 CompositePS(VSOutput input) : SV_TARGET
 {
     uint2 pixelCoord = uint2(input.Position.xy);
+    float2 uv = input.TexCoord;
     
     float depth = g_DepthBuffer[pixelCoord];
     
+    // 天空
     if (depth >= 0.9999)
     {
-        float3 viewDir = normalize(ReconstructWorldPosition(input.TexCoord, depth) - RC_CameraPosition);
-        float skyFactor = saturate(viewDir.y * 0.5 + 0.5);
-        float3 skyColor = lerp(float3(0.3, 0.5, 0.7), float3(0.05, 0.1, 0.2), skyFactor);
+        float3 worldPos = ReconstructWorldPosition(uv, 0.5);
+        float3 viewDir = normalize(worldPos - CameraWorldPosition);
+        float3 skyColor = GetSkyColor(viewDir);
+        // 天空不需要 tonemapping，直接 gamma 校正
+        skyColor = pow(saturate(skyColor), 1.0 / 2.2);
         return float4(skyColor, 1.0);
     }
     
-    float3 worldPos = ReconstructWorldPosition(input.TexCoord, depth);
+    float3 worldPos = ReconstructWorldPosition(uv, depth);
     
-    float4 albedo = g_GBufferAlbedo[pixelCoord];
-    float3 normal = normalize(g_GBufferNormal[pixelCoord].xyz * 2.0 - 1.0);
-    float4 material = g_GBufferMaterial[pixelCoord];
+    // GBuffer
+    float3 albedo = g_GBufferAlbedo[pixelCoord].rgb;
+    float3 worldNormal = DecodeNormal(g_GBufferNormal[pixelCoord].rgb);
+    float4 specularData = g_GBufferMaterial[pixelCoord];
+    float roughness = specularData.r;
+    float metallic = specularData.g;
+    float ao = specularData.b;
     
-    float roughness = material.r;
-    float metallic = material.g;
-    float ao = material.b;
+    // 直接光照
+    float shadow = SampleShadowMapPCF(worldPos, worldNormal);
+    float3 directLighting = CalculateDirectLighting(worldPos, worldNormal, albedo, shadow);
+    directLighting *= DirectIntensity;
     
-    // ✅ 4. 采样直接光照
-    // 方案 A：如果 GBuffer Pass 已经计算了光照，直接使用 albedo
-    // 方案 B：如果需要从 Surface Cache 读取，调用 SampleSurfaceCache
-    // 方案 C：在 Composite 中重新计算光照（最灵活）
+    // 间接光照
+    float3 indirectLighting = g_ScreenIndirectLighting[pixelCoord].rgb;
+    indirectLighting *= IndirectIntensity;
+    indirectLighting *= lerp(1.0, ao, AOStrength);
+    float3 diffuseColor = albedo * (1.0 - metallic);
+    indirectLighting *= diffuseColor;
     
-    // 这里我们假设 GBuffer 的 albedo 已经包含了基础颜色
-    // 直接光照可以从其他地方获取（例如额外的 light buffer）
-    // 简化起见，我们只使用环境光
-    float3 directLight = float3(0.1, 0.1, 0.1);  // 简单环境光
-
-    // Radiance Cache 采样间接光照
-    float3 indirectLight = SampleRadianceCache(worldPos, normal);
-    
-    float3 diffuseColor = albedo.rgb;
-    
-    float3 finalColor = diffuseColor * (directLight + indirectLight * ao);
-    
-    // 简单的色调映射（可选）
-    finalColor = finalColor / (finalColor + 1.0);  // Reinhard
-    
-    // Gamma 校正
-    finalColor = pow(finalColor, 1.0 / 2.2);
+    // 合并
+    float3 finalColor = directLighting + indirectLighting;
+    finalColor = ToneMapACES(finalColor);
+    finalColor = pow(saturate(finalColor), 1.0 / 2.2);
     
     return float4(finalColor, 1.0);
 }

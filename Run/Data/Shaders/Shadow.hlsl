@@ -1,55 +1,42 @@
-struct vs_input_t
+cbuffer ModelConstants : register(b2)
 {
-	float3 modelPosition : POSITION;
-	float4 color : COLOR;
-	float2 uv : TEXCOORD;
-	float3 modelTangent : TANGENT;
-	float3 modelBitangent : BITANGENT;
-	float3 modelNormal : NORMAL;
+    float4x4 ModelToWorldTransform;
+    float4 ModelColor;
 };
 
-//------------------------------------------------------------------------------------------------
-struct v2p_t
+cbuffer ShadowConstants : register(b5)
 {
-	float4 clipPosition : SV_Position;
+    float4x4 LightWorldToCamera;     
+    float4x4 LightCameraToRender;
+    float4x4 LightRenderToClip;
+    float ShadowMapSize;
+    float ShadowBias;
+    float SoftnessFactor;
+    float LightSize;
+};
+struct VSInput
+{
+    float3 position : POSITION;
+    // 其他属性不需要，Shadow Pass 只关心位置
 };
 
-//------------------------------------------------------------------------------------------------
-cbuffer CameraConstants : register(b2)
+struct VSOutput
 {
-	float4x4 WorldToCameraTransform;	// View transform
-	float4x4 CameraToRenderTransform;	// Non-standard transform from game to DirectX conventions
-	float4x4 RenderToClipTransform;		// Projection transform
+    float4 clipPosition : SV_Position;
 };
 
-//------------------------------------------------------------------------------------------------
-cbuffer ModelConstants : register(b3)
+VSOutput VertexMain(VSInput input)
 {
-	float4x4 ModelToWorldTransform;		// Model transform
-	float4 ModelColor;
-};
-
-//------------------------------------------------------------------------------------------------
-cbuffer ShadowConstants : register(b6)
-{
-	float4x4 LightViewProjMatrix;        // World to Light's Clip Space
-};
-
-//------------------------------------------------------------------------------------------------
-v2p_t VertexMain(vs_input_t input)
-{
-	float4 modelPosition = float4(input.modelPosition, 1.0f);
-	float4 worldPosition = mul(ModelToWorldTransform, modelPosition);
-	float4 lightSpacePosition = mul(LightViewProjMatrix, worldPosition);
-
-	v2p_t v2p;
-	v2p.clipPosition = lightSpacePosition;
-	return v2p;
+    VSOutput output;
+    
+    float4 worldPos = mul(ModelToWorldTransform, float4(input.position, 1.0));
+    
+    float4 cameraPos = mul(LightWorldToCamera, worldPos);
+    float4 renderPos = mul(LightCameraToRender, cameraPos);
+    output.clipPosition = mul(LightRenderToClip, renderPos);
+    
+    return output;
 }
 
-//------------------------------------------------------------------------------------------------
-float PixelMain(v2p_t input) : SV_Depth
-{
-	// Nothing to compute; GPU will automatically output depth from clipPosition.z
-	return 0.0f;
-}
+// 无 Pixel Shader - 硬件自动写入深度到 Depth Buffer
+// PSO 中 PS = nullptr

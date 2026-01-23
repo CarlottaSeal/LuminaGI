@@ -1,0 +1,9 @@
+<StaticModelInfo
+    objFile = "Data/Models/Building/Floor01_wall_long.obj"
+    diffuseMap = "Data/Images/Floor_01_entrance_color_2K.jpg"
+    normalMap = "Data/Images/Floor_01_entrance_normal_2K.jpg"
+    specGlossEmitMap = "Data/Images/Floor_01_entrance_spec_2K.jpg"
+    unitsPerMeter =  "2"
+    flipUV = "false"
+
+/>

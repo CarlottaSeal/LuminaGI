@@ -1,0 +1,85 @@
+Shader Metadata Structure Update Guide
+======================================
+
+所有以下shader文件都需要更新 CardMetadata/SurfaceCardMetadata 结构：
+
+文件列表：
+1. ✓ GIVisualization\GIVisualizationSurfaceCache.hlsl (已完成)
+2. CombineSurfaceCache\SurfaceCacheCombine.hlsl
+3. ScreenProbe\RadianceComposite.hlsl
+4. ScreenProbe\MeshSDFTrace_Debug.hlsl
+5. ScreenProbe\MeshSDFTrace.hlsl
+6. InjectVoxelLighting.hlsl
+7. SurfaceRadiosity\ConvertToSH.hlsl
+8. SurfaceRadiosity\IntegrateSH.hlsl
+9. SurfaceRadiosity\RadiosityTrace.hlsl
+10. BuildGlobalSDF.hlsl
+11. RadianceCacheUpdate.hlsl
+
+修改规则：
+-----------
+
+将以下字段：
+    float Padding0;  →  float ObjectYaw;     // Object yaw (degrees)
+    float Padding1;  →  float ObjectPitch;   // Object pitch (degrees)
+    float Padding2;  →  float ObjectRoll;    // Object roll (degrees)
+    float Padding3;  →  float ObjectPosX;    // Object world position X
+
+在 WorldSizeX, WorldSizeY 后添加：
+    float ObjectPosY;  // Object world position Y
+    float ObjectPosZ;  // Object world position Z
+
+在 Direction, GlobalCardID 后添加：
+    uint Padding4;
+    uint Padding5;
+
+注意事项：
+-----------
+1. 某些文件可能使用不同的命名风格（Origin vs WorldOrigin, AxisX vs WorldAxisX）
+2. 某些文件的字段顺序可能不同（如 MeshSDFTrace.hlsl 的紧凑布局）
+3. 保持16字节对齐
+4. 总大小从112 bytes变为128 bytes
+
+示例对比：
+-----------
+
+修改前：
+    float3 Origin;
+    float Padding0;
+
+    float3 AxisX;
+    float Padding1;
+
+    float3 AxisY;
+    float Padding2;
+
+    float3 Normal;
+    float Padding3;
+
+    float WorldSizeX;
+    float WorldSizeY;
+    uint Direction;
+    uint GlobalCardID;
+
+修改后：
+    float3 Origin;
+    float ObjectYaw;         // degrees
+
+    float3 AxisX;
+    float ObjectPitch;       // degrees
+
+    float3 AxisY;
+    float ObjectRoll;        // degrees
+
+    float3 Normal;
+    float ObjectPosX;        // world pos X
+
+    float WorldSizeX;
+    float WorldSizeY;
+    float ObjectPosY;        // world pos Y
+    float ObjectPosZ;        // world pos Z
+
+    uint Direction;
+    uint GlobalCardID;
+    uint Padding4;
+    uint Padding5;

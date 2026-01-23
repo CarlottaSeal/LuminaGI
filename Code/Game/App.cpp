@@ -52,7 +52,7 @@ App::App()
 	WindowConfig windowConfig;
 	windowConfig.m_aspectRatio = 2.f;
 	windowConfig.m_inputSystem = g_theInput;
-	windowConfig.m_windowTitle = g_gameConfigBlackboard.GetValue("windowTitle", "Protogame3D");
+	windowConfig.m_windowTitle = g_gameConfigBlackboard.GetValue("windowTitle", "Lumina Global Illumination");
 	windowConfig.m_isFullscreen = g_gameConfigBlackboard.GetValue("windowFullscreen", false);
 	g_theWindow = new Window(windowConfig);
 
@@ -275,7 +275,7 @@ void App::EndFrame()
 
 void App::UpdateCursor()
 {
-	if (g_theGame->m_isInAttractMode || g_theGame->m_openDevConsole || !g_theWindow->WindowHasFocus())
+	if (g_theGame->m_isInAttractMode || g_theGame->m_openDevConsole || !g_theWindow->WindowHasFocus() || g_theGame->m_mouseFPS)
 	{
 		g_theInput->SetCursorMode(CursorMode::POINTER);
 	}
