@@ -4,15 +4,14 @@ cbuffer ModelConstants : register(b2)
     float4 ModelColor;
 };
 
-cbuffer ShadowConstants : register(b5)
+cbuffer ShadowConstants : register(b6)
 {
     float4x4 LightWorldToCamera;     
     float4x4 LightCameraToRender;
     float4x4 LightRenderToClip;
     float ShadowMapSize;
     float ShadowBias;
-    float SoftnessFactor;
-    float LightSize;
+    float2 Padding;
 };
 struct VSInput
 {

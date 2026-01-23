@@ -121,10 +121,11 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
     
     ScreenProbeGPU probe = ProbeBuffer[probeIndex];
     
-    TraceResult result = (TraceResult)0; 
-    result.HitDistance = MeshSDFTraceDistance;  
-    result.HitNormal = float3(0, 1, 0);         
-    result.HitCardIndex = 0xFFFFFFFF;           
+    TraceResult result;
+    result.HitPosition = float3(0, 0, 0);
+    result.HitDistance = TraceMaxDistance;
+    result.HitNormal = float3(0, 1, 0);
+    result.Validity = 0.0f;
     
     if (probe.Validity <= 0.0f)
     {

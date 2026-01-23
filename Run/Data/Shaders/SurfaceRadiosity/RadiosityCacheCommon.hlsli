@@ -44,15 +44,9 @@ cbuffer SurfaceRadiosityConstants : register(b0)
     // Global SDF 信息
     float3  GlobalSDFCenter;
     float   GlobalSDFExtent;
-
+    
     float3  GlobalSDFInvExtent;
     uint    GlobalSDFResolution;
-
-    // Voxel Lighting 场景边界 (与 InjectVoxelLighting 一致)
-    float3  SceneBoundsMin;
-    float   VoxelLightingPadding0;
-    float3  SceneBoundsMax;
-    float   VoxelLightingPadding1;
     
     // 滤波参数
     float   DepthWeightScale;           // 10.0

@@ -24,72 +24,24 @@ uint PackVisibility(uint meshIndex, float distance, float voxelSize)
 }
 
 // SDF sphere trace along direction
-// 支持从mesh内部开始追踪（寻找表面出口点）
-bool TraceMeshSDF(float3 startPos, float3 direction, uint meshIndex,
+bool TraceMeshSDF(float3 startPos, float3 direction, uint meshIndex, 
                   out float hitDistance, float maxDistance, float voxelSize)
 {
     MeshSDFInfoGPU sdfInfo = InstanceInfos[meshIndex];
-
+    
     float t = 0.0;
     const int MAX_STEPS = 64;
-    const float SURFACE_THRESHOLD = voxelSize * 0.5;
-
-    // 检测起始点是否在mesh内部
-    float3 localStart = mul(sdfInfo.WorldToLocal, float4(startPos, 1.0)).xyz;
-    float3 bmin = sdfInfo.LocalBoundsMin;
-    float3 bmax = sdfInfo.LocalBoundsMax;
-    float3 uvwStart = (localStart - bmin) / (bmax - bmin);
-
-    bool startedInside = false;
-    if (all(uvwStart >= 0.0) && all(uvwStart <= 1.0))
-    {
-        float sdfStart = g_SDFTextures[sdfInfo.SDFTextureIndex].SampleLevel(LinearSampler, uvwStart, 0);
-        startedInside = (sdfStart <= 0.0);  // 负值或0表示在内部或表面
-    }
-
-    // 如果从内部开始，使用固定步长向外追踪直到找到表面
-    if (startedInside)
-    {
-        float prevSDF = -1.0;
-        for (int step = 0; step < MAX_STEPS; ++step)
-        {
-            t += voxelSize * 0.5;  // 固定小步长
-
-            float3 worldPos = startPos + direction * t;
-            float3 localPos = mul(sdfInfo.WorldToLocal, float4(worldPos, 1.0)).xyz;
-            float3 uvw = (localPos - bmin) / (bmax - bmin);
-
-            // 出了bounds，认为找到了边界
-            if (any(uvw < 0.0) || any(uvw > 1.0))
-            {
-                hitDistance = t;
-                return true;
-            }
-
-            float sdfDist = g_SDFTextures[sdfInfo.SDFTextureIndex].SampleLevel(LinearSampler, uvw, 0);
-            float worldDist = sdfDist * sdfInfo.LocalToWorldScale;
-
-            // 从负到正穿过表面
-            if (worldDist >= 0.0 && prevSDF < 0.0)
-            {
-                hitDistance = t;
-                return true;
-            }
-
-            prevSDF = worldDist;
-
-            if (t > maxDistance)
-                return false;
-        }
-        return false;
-    }
-
-    // 从外部开始的标准sphere tracing
+    const float MIN_DIST = voxelSize * 0.5;
+    
     for (int step = 0; step < MAX_STEPS; ++step)
     {
         float3 worldPos = startPos + direction * t;
         float3 localPos = mul(sdfInfo.WorldToLocal, float4(worldPos, 1.0)).xyz;
-
+        
+        // 正确：用SDF范围
+        float3 bmin = sdfInfo.LocalBoundsMin;
+        float3 bmax = sdfInfo.LocalBoundsMax;
+        
         // Check bounds
         if (any(localPos < bmin - voxelSize) || any(localPos > bmax + voxelSize))
         {
@@ -98,31 +50,32 @@ bool TraceMeshSDF(float3 startPos, float3 direction, uint meshIndex,
                 return false;
             continue;
         }
-
+        
+        // 转换到UVW
         float3 uvw = (localPos - bmin) / (bmax - bmin);
-
+        
         if (all(uvw >= 0.0) && all(uvw <= 1.0))
         {
             float sdfDist = g_SDFTextures[sdfInfo.SDFTextureIndex].SampleLevel(LinearSampler, uvw, 0);
             float worldDist = sdfDist * sdfInfo.LocalToWorldScale;
-
-            if (worldDist < SURFACE_THRESHOLD)
+            
+            if (worldDist < MIN_DIST)
             {
                 hitDistance = t;
                 return true;
             }
-
+            
             t += max(worldDist, voxelSize * 0.1);
         }
         else
         {
             t += voxelSize;
         }
-
+        
         if (t > maxDistance)
             return false;
     }
-
+    
     return false;
 }
 
@@ -187,15 +140,16 @@ void CSMain(uint3 dispatchThreadID : SV_DispatchThreadID)
     for (uint d = 0; d < 6; ++d)
     {
         float hitDist;
-        // 只对包含此voxel的mesh做ray trace，找到其表面距离
-        // 这样InjectVoxelLighting可以用这个距离采样该mesh的Card
-        if (TraceMeshSDF(worldPos, directions[d], uint(containingMesh), hitDist, maxTraceDist, VoxelSize.x))
+        // 对所有 mesh 做 ray trace
+        for (uint m = 0; m < InstanceCount; ++m)
         {
-            // Pack: 每个方向用 5 bits 存储距离信息
-            uint quantized = min(uint(hitDist / maxTraceDist * 31.0), 31u);
-            // 确保至少为1，避免被InjectVoxelLighting跳过
-            quantized = max(quantized, 1u);
-            visibility |= (quantized << (d * 5));
+            if (TraceMeshSDF(worldPos, directions[d], m, hitDist, maxTraceDist, VoxelSize.x))
+            {
+                // Pack: 每个方向用 5 bits 存储距离信息
+                uint quantized = min(uint(hitDist / maxTraceDist * 31.0), 31u);
+                visibility |= (quantized << (d * 5));
+                break;
+            }
         }
     }
     

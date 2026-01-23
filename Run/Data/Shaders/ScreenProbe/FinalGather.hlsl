@@ -13,7 +13,7 @@ Texture2D<float4> AlbedoBuffer  : register(REG_GBUFFER_ALBEDO);      // t203
 Texture2D<float4> ProbeRadianceFiltered : register(REG_PROBE_RAD_FILT_SRV); // t420
 StructuredBuffer<ScreenProbeGPU> ProbeBuffer : register(REG_PROBE_BUFFER_SRV); // t401
 
-RWTexture2D<float4> ScreenIndirectRaw : register(REG_INDIRECT_RAW_UAV); // u433 - 写入原始输出，时间滤波前
+RWTexture2D<float4> ScreenIndirectLighting : register(REG_INDIRECT_LIGHT_UAV); // u427
 
 SamplerState LinearSampler : register(s1);
 SamplerState PointSampler  : register(s0);
@@ -76,7 +76,7 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
     // 天空像素
     if (depth <= 0.0f || depth >= 0.9999f)
     {
-        ScreenIndirectRaw[screenCoord] = float4(0, 0, 0, 0);
+        ScreenIndirectLighting[screenCoord] = float4(0, 0, 0, 0);
         return;
     }
     
@@ -152,5 +152,5 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
     float ao = 1.0f - AOStrength * (1.0f - saturate(Luminance(finalRadiance)));
     indirectLight *= ao;
     
-    ScreenIndirectRaw[screenCoord] = float4(indirectLight, 1.0f);
+    ScreenIndirectLighting[screenCoord] = float4(indirectLight, 1.0f);
 }
