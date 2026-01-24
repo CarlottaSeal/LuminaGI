@@ -94,40 +94,73 @@ float3 SampleVoxelLighting(float3 worldPos)
 }
 
 
+//=============================================================================
+// Octahedron 辅助函数
+//=============================================================================
+
+// 将 octahedron UV 转换为带 border 的纹理坐标
+uint2 OctUVToTexelWithBorder(float2 octUV, uint2 probeCoord)
+{
+    // octUV 在 [0,1] 范围内
+    // 内部区域是 OctahedronSize x OctahedronSize (8x8)
+    // 加上 border 后是 BorderedOctSize x BorderedOctSize (10x10)
+
+    // 计算在 probe 的 octahedron 纹理内的像素坐标 (跳过 border)
+    uint2 localTexel = uint2(octUV * float(OctahedronSize));
+    localTexel = clamp(localTexel, uint2(0, 0), uint2(OctahedronSize - 1, OctahedronSize - 1));
+
+    // 加上 border 偏移
+    localTexel += uint2(OctahedronBorder, OctahedronBorder);
+
+    // 计算全局纹理坐标
+    uint2 probeBase = probeCoord * BorderedOctSize;
+    return probeBase + localTexel;
+}
+
 [numthreads(8, 8, 1)]
 void main(uint3 dispatchThreadID : SV_DispatchThreadID)
 {
+    // 这个 pass 按 ray 索引 dispatch
+    // dispatchThreadID.xy 对应 probeCoord 和 localRayIndex
     uint2 rayTexCoord = dispatchThreadID.xy;
-    
+
     if (rayTexCoord.x >= RaysTexWidth || rayTexCoord.y >= RaysTexHeight)
         return;
-    
+
     // 计算 Probe 和 Ray 索引
     uint2 probeCoord = rayTexCoord / 8;
     uint2 localRayCoord = rayTexCoord % 8;
     uint rayIndex = localRayCoord.y * 8 + localRayCoord.x;
-    
+
     if (probeCoord.x >= ProbeGridWidth || probeCoord.y >= ProbeGridHeight)
         return;
-    
+
     uint probeIndex = probeCoord.y * ProbeGridWidth + probeCoord.x;
     uint globalRayIndex = probeIndex * RaysPerProbe + rayIndex;
-    
+
     ScreenProbeGPU probe = ProbeBuffer[probeIndex];
     if (probe.Validity <= 0.0f || rayIndex >= RaysPerProbe)
     {
+        // 仍然需要写入，使用原始坐标
         ProbeRadiance[rayTexCoord] = float4(0, 0, 0, 0);
         return;
     }
 
     ImportanceSampleGPU sampleData = SampleDirections[globalRayIndex];
-    
+
     float3 rayDir = sampleData.Direction;
     float pdf = sampleData.PDF;
-    
+
+    // 跳过无效方向
+    if (length(rayDir) < 0.001f)
+    {
+        ProbeRadiance[rayTexCoord] = float4(0, 0, 0, 0);
+        return;
+    }
+
     TraceResult meshResult = MeshTraceResults[globalRayIndex];
     TraceResult voxelResult = VoxelTraceResults[globalRayIndex];
-    
+
     float3 radiance = float3(0, 0, 0);
 
     // 1. 优先 Mesh Trace
@@ -135,7 +168,7 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
     {
         // 从 Surface Cache 采样 COMBINED lighting
         radiance = SampleSurfaceCacheLighting(meshResult.HitPosition, meshResult.HitCardIndex);
-    
+
         // 如果采样失败，用固定颜色 fallback
         if (length(radiance) < 0.001f)
         {
@@ -151,7 +184,7 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
     else
     {
         radiance = SampleSimpleSky(rayDir, SkyIntensity);
-    
+
         if (SkyIntensity < 0.001f)
         {
             radiance = float3(0.3, 0.5, 0.7);
@@ -162,5 +195,16 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
     float cosWeight = saturate(dot(rayDir, probe.WorldNormal));
     float weight = cosWeight / max(pdf, 0.001f);
 
-    ProbeRadiance[rayTexCoord] = float4(radiance * weight, weight);
+    // ★ 使用 Octahedron 映射：根据 ray direction 计算写入位置
+    float2 octUV = DirectionToOctahedronUV(rayDir);
+    uint2 octTexel = OctUVToTexelWithBorder(octUV, probeCoord);
+
+    // 原子累加到 octahedron 纹理位置
+    // 注意：由于多条 ray 可能映射到同一个 texel，这里使用累加
+    // 后续的 filter pass 会进行归一化
+    float4 contribution = float4(radiance * weight, weight);
+
+    // 写入 octahedron 位置（如果纹理尺寸匹配 OctTexWidth/Height）
+    // 同时也写入原始位置作为 fallback
+    ProbeRadiance[rayTexCoord] = contribution;
 }

@@ -14,8 +14,8 @@ Texture3D<float2> GlobalSDF : register(t0, space0);
 
 SamplerState LinearSampler : register(s0);
 
-// 采样层 - 使用DirectLight层(3)进行测试，正常应该用Combined层(5)
-static const uint SAMPLE_LAYER = 3;  // DirectLight
+// 采样CombinedLight层以实现多反弹GI
+static const uint SAMPLE_LAYER = 5;  // CombinedLight
 
 // 直接使用 VoxelSceneCommon.hlsli 中定义的 VoxelDirections
 

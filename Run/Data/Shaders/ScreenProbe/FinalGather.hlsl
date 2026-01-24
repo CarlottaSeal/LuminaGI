@@ -22,29 +22,89 @@ SamplerState PointSampler  : register(s0);
 // 辅助函数
 //=============================================================================
 
-// 从 Probe Radiance 纹理采样（双线性插值 Probe 之间）
+//=============================================================================
+// ★ Octahedron 采样：根据方向从 Probe 的 8x8 octahedron 纹理采样
+//=============================================================================
+
+// 将方向转换为 probe 纹理坐标（支持双线性插值）
+float2 DirectionToProbeTexCoord(float3 dir, uint2 probeCoord)
+{
+    // 获取 octahedron UV [0,1]
+    float2 octUV = DirectionToOctahedronUV(dir);
+
+    // 转换到 probe 的 8x8 纹理区域内的坐标
+    // octUV * 8 给出 [0,8] 范围的坐标
+    float2 localCoord = octUV * float(OctahedronSize);
+
+    // 加上 probe 的基础偏移
+    float2 probeBase = float2(probeCoord * OctahedronSize);
+
+    return probeBase + localCoord;
+}
+
+// 从 Probe Radiance 纹理采样（使用 Octahedron 映射）
 float3 SampleProbeRadiance(uint2 probeCoord, float3 normal)
 {
     if (probeCoord.x >= ProbeGridWidth || probeCoord.y >= ProbeGridHeight)
         return float3(0, 0, 0);
-    
-    // 简化：采样 Probe 中心的平均辐射度
-    // 完整实现应该根据方向采样 Octahedron
-    uint2 rayTexBase = probeCoord * 8;
-    
+
+    // ★ 使用 Octahedron 映射：根据法线方向采样
+    float2 texCoord = DirectionToProbeTexCoord(normal, probeCoord);
+
+    // 双线性插值采样
+    int2 texel00 = int2(floor(texCoord - 0.5f));
+    int2 texel10 = texel00 + int2(1, 0);
+    int2 texel01 = texel00 + int2(0, 1);
+    int2 texel11 = texel00 + int2(1, 1);
+
+    float2 frac_coord = frac(texCoord - 0.5f);
+
+    // 计算 probe 的纹理边界
+    int2 probeMin = int2(probeCoord * OctahedronSize);
+    int2 probeMax = probeMin + int2(OctahedronSize - 1, OctahedronSize - 1);
+
+    // Clamp 到 probe 边界内
+    texel00 = clamp(texel00, probeMin, probeMax);
+    texel10 = clamp(texel10, probeMin, probeMax);
+    texel01 = clamp(texel01, probeMin, probeMax);
+    texel11 = clamp(texel11, probeMin, probeMax);
+
+    // 采样四个角
+    float4 s00 = ProbeRadianceFiltered[texel00];
+    float4 s10 = ProbeRadianceFiltered[texel10];
+    float4 s01 = ProbeRadianceFiltered[texel01];
+    float4 s11 = ProbeRadianceFiltered[texel11];
+
+    // 双线性插值权重
+    float w00 = (1.0f - frac_coord.x) * (1.0f - frac_coord.y);
+    float w10 = frac_coord.x * (1.0f - frac_coord.y);
+    float w01 = (1.0f - frac_coord.x) * frac_coord.y;
+    float w11 = frac_coord.x * frac_coord.y;
+
+    // 只考虑有效样本
     float3 totalRadiance = float3(0, 0, 0);
     float totalWeight = 0.0f;
-    
-    // 平均 8x8 区域（简化版）
+
+    if (s00.w > 0.0f) { totalRadiance += s00.rgb * w00; totalWeight += w00; }
+    if (s10.w > 0.0f) { totalRadiance += s10.rgb * w10; totalWeight += w10; }
+    if (s01.w > 0.0f) { totalRadiance += s01.rgb * w01; totalWeight += w01; }
+    if (s11.w > 0.0f) { totalRadiance += s11.rgb * w11; totalWeight += w11; }
+
+    if (totalWeight > 0.001f)
+        return totalRadiance / totalWeight;
+
+    // Fallback: 如果 octahedron 采样失败，用中心区域平均值
+    uint2 rayTexBase = probeCoord * OctahedronSize;
+    totalRadiance = float3(0, 0, 0);
+    totalWeight = 0.0f;
+
     [unroll]
-    for (uint y = 0; y < 8; y += 2)
+    for (uint y = 2; y < 6; y++)
     {
         [unroll]
-        for (uint x = 0; x < 8; x += 2)
+        for (uint x = 2; x < 6; x++)
         {
-            uint2 sampleCoord = rayTexBase + uint2(x, y);
-            float4 sample = ProbeRadianceFiltered[sampleCoord];
-            
+            float4 sample = ProbeRadianceFiltered[rayTexBase + uint2(x, y)];
             if (sample.w > 0.0f)
             {
                 totalRadiance += sample.rgb;
@@ -52,10 +112,10 @@ float3 SampleProbeRadiance(uint2 probeCoord, float3 normal)
             }
         }
     }
-    
+
     if (totalWeight > 0.0f)
         return totalRadiance / totalWeight;
-    
+
     return float3(0, 0, 0);
 }
 
