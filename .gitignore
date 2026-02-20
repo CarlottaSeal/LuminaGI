@@ -83,3 +83,4 @@ Desktop.ini
 *.orig
 *.swp
 *.swo
+.claude/settings.local.json

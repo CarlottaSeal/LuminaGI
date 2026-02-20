@@ -1,37 +1,20 @@
 //=============================================================================
 // RadiosityTrace.hlsl
-// Surface Radiosity Pass 5.1: Radiosity Trace
-// 
-// 在 Probe Grid (1024x1024) 上追踪光线，采样 Surface Cache 或天空
+// Surface Radiosity: SimLumen 风格 - 每像素一条射线
 //=============================================================================
 
 #include "RadiosityCacheCommon.hlsli"
 
-//=============================================================================
-// 资源绑定 - 与 Root Signature 匹配
-//=============================================================================
-
-// Root Parameter [1]: Surface Cache SRVs (t0-t5)
-Texture2DArray<float4>              SurfaceCacheAtlas   : register(t0);  // 6 layers
+Texture2DArray<float4>              SurfaceCacheAtlas   : register(t0);
 StructuredBuffer<SurfaceCardMetadata> CardMetadataBuffer : register(t1);
 
-// Root Parameter [2]: Global SDF + Voxel Lighting (t10-t11)
 Texture3D<float>    GlobalSDF       : register(t10);
 Texture3D<float4>   VoxelLighting   : register(t11);
 
-// Root Parameter [3]: Radiosity SRVs (t20-t25)
-Texture2D<float4>   RadiosityHistory : register(t21);
+RWTexture2D<float4> TraceRadianceAtlas : register(u0);
 
-// Root Parameter [4]: Radiosity UAVs (u0-u5)
-RWTexture2D<float4> RadiosityTraceResult : register(u0);
-
-// Samplers
 SamplerState PointSampler   : register(s0);
 SamplerState LinearSampler  : register(s1);
-
-//=============================================================================
-// 常量
-//=============================================================================
 
 #define LAYER_ALBEDO        0
 #define LAYER_NORMAL        1
@@ -41,204 +24,308 @@ SamplerState LinearSampler  : register(s1);
 #define LAYER_COMBINED      5
 
 //=============================================================================
-// Global SDF 追踪
+// SimLumen: Hammersley 序列
 //=============================================================================
+float2 Hammersley16(uint Index, uint NumSamples)
+{
+    float E1 = frac((float)Index / NumSamples);
+    uint bits = Index;
+    bits = (bits << 16u) | (bits >> 16u);
+    bits = ((bits & 0x55555555u) << 1u) | ((bits & 0xAAAAAAAAu) >> 1u);
+    bits = ((bits & 0x33333333u) << 2u) | ((bits & 0xCCCCCCCCu) >> 2u);
+    bits = ((bits & 0x0F0F0F0Fu) << 4u) | ((bits & 0xF0F0F0F0u) >> 4u);
+    bits = ((bits & 0x00FF00FFu) << 8u) | ((bits & 0xFF00FF00u) >> 8u);
+    float E2 = float(bits) * 2.3283064365386963e-10f;
+    return float2(E1, E2);
+}
 
+uint2 GetProbeJitter(uint temporalIndex)
+{
+    return uint2(Hammersley16(temporalIndex % MAX_FRAME_ACCUMULATED, MAX_FRAME_ACCUMULATED) * float(PROBE_TEXELS_SIZE));
+}
+
+//=============================================================================
+// SimLumen: Cosine-weighted hemisphere sampling
+// PDF = cos(theta) / PI
+//=============================================================================
+float4 CosineSampleHemisphere(float2 E)
+{
+    float Phi = 2.0f * PI * E.x;
+    float CosTheta = sqrt(E.y);
+    float SinTheta = sqrt(1.0f - CosTheta * CosTheta);
+
+    float3 H;
+    H.x = SinTheta * cos(Phi);
+    H.y = SinTheta * sin(Phi);
+    H.z = CosTheta;
+
+    float PDF = CosTheta * (1.0f / PI);
+    return float4(H, PDF);
+}
+
+//=============================================================================
+// SimLumen: Frisvad tangent basis
+//=============================================================================
+float3x3 GetTangentBasisFrisvad(float3 TangentZ)
+{
+    float3 TangentX;
+    float3 TangentY;
+
+    if (TangentZ.z < -0.9999999f)
+    {
+        TangentX = float3(0, -1, 0);
+        TangentY = float3(-1, 0, 0);
+    }
+    else
+    {
+        float A = 1.0f / (1.0f + TangentZ.z);
+        float B = -TangentZ.x * TangentZ.y * A;
+        TangentX = float3(1.0f - TangentZ.x * TangentZ.x * A, B, -TangentZ.x);
+        TangentY = float3(B, 1.0f - TangentZ.y * TangentZ.y * A, -TangentZ.y);
+    }
+
+    return float3x3(TangentX, TangentY, TangentZ);
+}
+
+//=============================================================================
+// SimLumen: GetRadiosityRay - 根据像素位置生成射线
+//=============================================================================
+void GetRadiosityRay(uint2 tileIndex, uint2 subTilePos, float3 worldNormal, out float3 worldRay, out float pdf)
+{
+    // Probe texel center (SimLumen 用 0.5, 0.5)
+    float2 probeTexelJitter = float2(0.5f, 0.5f);
+    float2 probeUV = (float2(subTilePos) + probeTexelJitter) / float(PROBE_TEXELS_SIZE);
+
+    float4 raySample = CosineSampleHemisphere(probeUV);
+    float3 localRayDirection = raySample.xyz;
+    pdf = raySample.w;
+
+    float3x3 tangentBasis = GetTangentBasisFrisvad(worldNormal);
+    worldRay = mul(localRayDirection, tangentBasis);
+    worldRay = normalize(worldRay);
+}
+
+//=============================================================================
+// SDF Tracing
+//=============================================================================
 float SampleGlobalSDF(float3 worldPos)
 {
-    // 世界坐标转 SDF UV
     float3 sdfUV = (worldPos - GlobalSDFCenter) / (GlobalSDFExtent * 2.0f) + 0.5f;
-    
+
     if (any(sdfUV < 0.0f) || any(sdfUV > 1.0f))
         return TraceMaxDistance;
-    
+
     return GlobalSDF.SampleLevel(LinearSampler, sdfUV, 0);
 }
 
-bool TraceGlobalSDF(
-    float3 origin,
-    float3 direction,
-    float maxDist,
-    out float hitDist,
-    out float3 hitPos)
+bool TraceGlobalSDF(float3 origin, float3 direction, float maxDist, out float hitDist, out float3 hitPos)
 {
     float t = RayBias;
-    
+
     [loop]
     for (uint i = 0; i < TraceMaxSteps; i++)
     {
         float3 pos = origin + direction * t;
         float dist = SampleGlobalSDF(pos);
-        
+
         if (dist < TraceHitThreshold)
         {
             hitDist = t;
             hitPos = pos;
             return true;
         }
-        
+
         t += max(dist, 0.1f);
-        
+
         if (t > maxDist)
             break;
     }
-    
+
     hitDist = maxDist;
     hitPos = origin + direction * maxDist;
     return false;
 }
 
 //=============================================================================
-// 从 Voxel Lighting 采样
+// Voxel Lighting sampling - SimLumen 风格方向加权近似
 //=============================================================================
-
-float3 SampleVoxelLightingAtPosition(float3 worldPos)
+float3 SampleVoxelLightingAtPosition(float3 worldPos, float3 rayDir)
 {
-    float3 voxelUV = (worldPos - GlobalSDFCenter) / (GlobalSDFExtent * 2.0f) + 0.5f;
-    
+    float3 voxelExtent = SceneBoundsMax - SceneBoundsMin;
+    float3 voxelUV = (worldPos - SceneBoundsMin) / voxelExtent;
+
     if (any(voxelUV < 0.0f) || any(voxelUV > 1.0f))
         return float3(0, 0, 0);
-    
-    return VoxelLighting.SampleLevel(LinearSampler, voxelUV, 0).rgb;
+
+    // SimLumen 风格：沿 3 个主轴方向采样并加权
+    // 由于我们只有 3D 纹理（不是 6 方向 buffer），用偏移采样模拟
+    float3 voxelSize = voxelExtent / float3(GlobalSDFResolution, GlobalSDFResolution, GlobalSDFResolution);
+    float offsetDist = length(voxelSize) * 0.5f;
+
+    // 6 个方向
+    float3 directions[6] = {
+        float3(1, 0, 0), float3(-1, 0, 0),
+        float3(0, 1, 0), float3(0, -1, 0),
+        float3(0, 0, 1), float3(0, 0, -1)
+    };
+
+    float3 totalRadiance = float3(0, 0, 0);
+    float totalWeight = 0.0f;
+
+    // 采样中心点
+    float3 centerRadiance = VoxelLighting.SampleLevel(LinearSampler, voxelUV, 0).rgb;
+
+    // 根据射线方向计算每个方向的权重
+    for (int i = 0; i < 6; i++)
+    {
+        float weight = saturate(dot(rayDir, directions[i]));
+        if (weight > 0.001f)
+        {
+            // 沿该方向偏移采样
+            float3 offsetPos = worldPos + directions[i] * offsetDist;
+            float3 offsetUV = (offsetPos - SceneBoundsMin) / voxelExtent;
+
+            if (all(offsetUV >= 0.0f) && all(offsetUV <= 1.0f))
+            {
+                float3 dirRadiance = VoxelLighting.SampleLevel(LinearSampler, offsetUV, 0).rgb;
+                totalRadiance += dirRadiance * weight;
+                totalWeight += weight;
+            }
+            else
+            {
+                // 如果偏移位置超出范围，用中心值
+                totalRadiance += centerRadiance * weight;
+                totalWeight += weight;
+            }
+        }
+    }
+
+    if (totalWeight > 0.001f)
+    {
+        return totalRadiance / totalWeight;
+    }
+
+    return centerRadiance;
 }
 
 //=============================================================================
-// Card 查找和采样
+// 获取像素的世界位置和法线
 //=============================================================================
-
-uint FindCardAtAtlasPixel(uint2 atlasPixel)
+struct PixelData
 {
-    // 线性搜索 (可以用空间数据结构优化)
+    float3 WorldPosition;
+    float3 WorldNormal;
+    float Depth;
+    bool Valid;
+};
+
+PixelData GetPixelData(uint2 atlasCoord)
+{
+    PixelData data;
+    data.Valid = false;
+
+    // 找到这个像素属于哪个 Card
     [loop]
     for (uint i = 0; i < ActiveCardCount; i++)
     {
         SurfaceCardMetadata card = CardMetadataBuffer[i];
-        
-        if (atlasPixel.x >= card.AtlasX && 
-            atlasPixel.x < card.AtlasX + card.ResolutionX &&
-            atlasPixel.y >= card.AtlasY && 
-            atlasPixel.y < card.AtlasY + card.ResolutionY)
+
+        if (atlasCoord.x >= card.AtlasX &&
+            atlasCoord.x < card.AtlasX + card.ResolutionX &&
+            atlasCoord.y >= card.AtlasY &&
+            atlasCoord.y < card.AtlasY + card.ResolutionY)
         {
-            return i;
+            float2 localPixel = float2(atlasCoord) - float2(card.AtlasX, card.AtlasY);
+            float2 uv = (localPixel + 0.5f) / float2(card.ResolutionX, card.ResolutionY);
+
+            data.WorldPosition = card.Origin
+                + card.AxisX * (uv.x - 0.5f) * card.WorldSize.x
+                + card.AxisY * (uv.y - 0.5f) * card.WorldSize.y;
+
+            float4 normalData = SurfaceCacheAtlas.Load(int4(atlasCoord, LAYER_NORMAL, 0));
+            data.WorldNormal = normalData.xyz * 2.0f - 1.0f;
+            data.WorldNormal = SafeNormalize(data.WorldNormal);
+
+            data.Depth = 1.0f; // 简化：假设有效
+            data.Valid = true;
+            break;
         }
     }
-    return 0xFFFFFFFF;
-}
 
-float3 ReconstructWorldPosition(uint2 atlasPixel, uint cardIndex)
-{
-    SurfaceCardMetadata card = CardMetadataBuffer[cardIndex];
-    
-    float2 localPixel = float2(atlasPixel) - float2(card.AtlasX, card.AtlasY);
-    float2 uv = (localPixel + 0.5f) / float2(card.ResolutionX, card.ResolutionY);
-    
-    return card.Origin 
-         + card.AxisX * (uv.x - 0.5f) * card.WorldSize.x
-         + card.AxisY * (uv.y - 0.5f) * card.WorldSize.y;
+    return data;
 }
 
 //=============================================================================
-// 半球采样
+// Main: SimLumen 风格 - 每像素一条射线
 //=============================================================================
-
-float3 GetHemisphereDirection(uint rayIndex, uint probeIndex, float3 normal)
+[numthreads(16, 16, 1)]
+void main(uint3 dispatchThreadID : SV_DispatchThreadID)
 {
-    // 添加时间抖动
-    uint seed = probeIndex * RaysPerProbe + rayIndex + FrameIndex * 1337u;
-    float jitterX = Random(seed);
-    float jitterY = Random(seed + 7919u);
-    
-    // Fibonacci 分布 + 抖动
-    float phi = TWO_PI * (frac(float(rayIndex) * 0.6180339887f) + jitterX * 0.1f);
-    float cosTheta = 1.0f - (2.0f * rayIndex + 1.0f + jitterY * 0.5f) / (2.0f * RaysPerProbe);
-    cosTheta = max(0.0f, cosTheta);
-    float sinTheta = sqrt(1.0f - cosTheta * cosTheta);
-    
-    float3 localDir = float3(sinTheta * cos(phi), sinTheta * sin(phi), cosTheta);
-    
-    // 变换到 Normal 空间
-    float3 up = abs(normal.y) < 0.999f ? float3(0, 1, 0) : float3(1, 0, 0);
-    float3 tangent = normalize(cross(up, normal));
-    float3 bitangent = cross(normal, tangent);
-    
-    return normalize(tangent * localDir.x + bitangent * localDir.y + normal * localDir.z);
-}
+    uint2 pixelCoord = dispatchThreadID.xy;
 
-//=============================================================================
-// 主计算着色器
-//=============================================================================
-
-[numthreads(8, 8, 1)]
-void main(uint3 DispatchThreadID : SV_DispatchThreadID)
-{
-    uint2 probeCoord = DispatchThreadID.xy;
-    
-    if (probeCoord.x >= ProbeGridWidth || probeCoord.y >= ProbeGridHeight)
+    if (pixelCoord.x >= AtlasWidth || pixelCoord.y >= AtlasHeight)
         return;
-    
-    // Probe 对应的 Atlas 中心像素
-    uint probeSpacingInt = (uint)ProbeSpacing;
-    uint2 atlasCenter = probeCoord * probeSpacingInt + probeSpacingInt / 2;
-    
-    // 查找 Probe 所在的 Card
-    uint cardIndex = FindCardAtAtlasPixel(atlasCenter);
-    
-    if (cardIndex == 0xFFFFFFFF)
+
+    float4 normalCheck = SurfaceCacheAtlas.Load(int4(pixelCoord, LAYER_NORMAL, 0));
+    if (dot(normalCheck.xyz, normalCheck.xyz) < 0.001f)
     {
-        RadiosityTraceResult[probeCoord] = float4(0, 0, 0, 0);
+        TraceRadianceAtlas[pixelCoord] = float4(0, 0, 0, 0);
         return;
     }
-    
-    // 重建世界坐标和法线
-    float3 worldPos = ReconstructWorldPosition(atlasCenter, cardIndex);
-    float3 normal = CardMetadataBuffer[cardIndex].Normal;
-    float3 rayOrigin = worldPos + normal * RayBias;
-    
-    // 累积光照
-    float3 totalRadiance = float3(0, 0, 0);
-    float totalWeight = 0.0f;
-    
-    uint probeIndex = probeCoord.y * ProbeGridWidth + probeCoord.x;
-    
-    // 追踪多条光线
-    [loop]
-    for (uint rayIdx = 0; rayIdx < RaysPerProbe; rayIdx++)
+
+    // 计算这个像素在 probe grid 中的位置
+    uint2 tileIndex = pixelCoord / PROBE_TEXELS_SIZE;
+    uint2 subTilePos = pixelCoord % PROBE_TEXELS_SIZE;
+
+    // SimLumen: 使用 Hammersley jitter（确定性序列，4帧循环）
+    uint temporalIndex = tileIndex.y * (AtlasWidth / PROBE_TEXELS_SIZE) + tileIndex.x + FrameIndex;
+    uint2 probeJitter = GetProbeJitter(temporalIndex);
+
+    uint2 probeStartPos = tileIndex * PROBE_TEXELS_SIZE;
+    uint2 probeCenterPos = probeStartPos + probeJitter;
+
+    // 获取 probe 中心的像素数据
+    PixelData probeData = GetPixelData(probeCenterPos);
+
+    float3 radiance = float3(0, 0, 0);
+
+    if (probeData.Valid)
     {
-        float3 rayDir = GetHemisphereDirection(rayIdx, probeIndex, normal);
-        float3 radiance = float3(0, 0, 0);
-        
-        // 追踪 Global SDF
+        // 生成这个像素的射线
+        float3 worldRay;
+        float pdf;
+        GetRadiosityRay(tileIndex, subTilePos, probeData.WorldNormal, worldRay, pdf);
+
+        // SDF 追踪
+        float3 rayOrigin = probeData.WorldPosition + probeData.WorldNormal * RayBias;
         float hitDist;
         float3 hitPos;
-        bool hit = TraceGlobalSDF(rayOrigin, rayDir, TraceMaxDistance, hitDist, hitPos);
-        
+        bool hit = TraceGlobalSDF(rayOrigin, worldRay, TraceMaxDistance, hitDist, hitPos);
+
         if (hit)
         {
-            // 命中：采样 Voxel Lighting
-            radiance = SampleVoxelLightingAtPosition(hitPos);
+            // 采样 Voxel Lighting
+            radiance = SampleVoxelLightingAtPosition(hitPos, worldRay);
         }
         else
         {
-            // 未命中：天空光
-            radiance = SampleSkyLight(rayDir, SkyIntensity);
+            radiance = SampleSkyLight(worldRay, SkyIntensity);
+            if (SkyIntensity < 0.001f)
+            {
+                radiance = float3(0.01f, 0.01f, 0.01f);
+            }
         }
-        
-        // Cosine 加权
-        float cosWeight = max(0.0f, dot(rayDir, normal));
-        totalRadiance += radiance * cosWeight;
-        totalWeight += cosWeight;
+
+        // SimLumen 归一化: 除以 PI
+        radiance = radiance * (1.0f / PI);
+
+        // SimLumen firefly clamp: 限制到 1/PI
+        float maxLighting = max(radiance.r, max(radiance.g, radiance.b));
+        if (maxLighting > (1.0f / PI))
+        {
+            radiance *= (1.0f / PI) / maxLighting;
+        }
     }
-    
-    // 归一化
-    if (totalWeight > 0.001f)
-        totalRadiance /= totalWeight;
-    
-    // 时间累积
-    float4 history = RadiosityHistory[probeCoord];
-    if (history.w > 0.0f)
-    {
-        totalRadiance = lerp(history.rgb, totalRadiance, TemporalBlendFactor);
-    }
-    
-    RadiosityTraceResult[probeCoord] = float4(totalRadiance, 1.0f);
+
+    TraceRadianceAtlas[pixelCoord] = float4(radiance, 0.0f);
 }

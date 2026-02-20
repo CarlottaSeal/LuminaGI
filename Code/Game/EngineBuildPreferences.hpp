@@ -15,3 +15,6 @@
 #endif
 
 #define ENGINE_DX12_RENDERER
+
+//static constexpr float CAMERA_NEAR = 0.1f;
+//static constexpr float CAMERA_FAR = 300.f;

@@ -1,15 +1,6 @@
-//=============================================================================
-// ScreenProbeCommon.hlsli
-// Screen Probe Final Gather 公共定义
-// 包含 cbuffer 和所有工具函数
-//=============================================================================
-
+// Screen Probe common definitions
 #ifndef SCREENPROBE_COMMON_HLSLI
 #define SCREENPROBE_COMMON_HLSLI
-
-//=============================================================================
-// 常量定义
-//=============================================================================
 
 #define PI 3.14159265359f
 #define TWO_PI 6.28318530718f
@@ -26,7 +17,7 @@ cbuffer ScreenProbeConstants : register(b0)
     uint    ProbeSpacing;           // 8
     uint    RaysPerProbe;           // 64
     uint    RaysTexWidth;           // ProbeGridWidth × 8
-    uint    RaysTexHeight;          // ProbeGridHeight × 8
+    uint    RaysTexHeight;          // ProbeGridHeight × OctahedronHeight
     
     float   TraceMaxDistance;       // 500.0
     uint    TraceMaxSteps;          // 128
@@ -39,9 +30,14 @@ cbuffer ScreenProbeConstants : register(b0)
     float   SkyIntensity;           // 0.3
     
     uint    CurrentFrame;
-    uint    OctahedronSize;         // 8
+    uint    OctahedronSize;         // 8 (width)
     uint    OctahedronBorder;       // 1
     uint    BorderedOctSize;        // 10
+
+    uint    OctahedronWidth;        // 8
+    uint    OctahedronHeight;       // 8 (8x8=64 rays)
+    uint    MeshInstanceCount;
+    uint    Padding6;
 
     float   DepthThreshold;         // 0.1f
     float   PlaneDepthWeight;       // 10.0f
@@ -89,23 +85,26 @@ float4x4 CameraToWorld;
     float4x4 RenderToCamera;       
     float4x4 ClipToRender;               
     
-    float4x4 PrevWorldToCamera;     // 上一帧 View
-    float4x4 PrevCameraToRender;    // 上一帧
-    float4x4 PrevRenderToClip;      // 上一帧 Projection
+    float4x4 PrevWorldToCamera;
+    float4x4 PrevCameraToRender;
+    float4x4 PrevRenderToClip;
     
     float   IndirectIntensity;      // 1.0
     uint UseHistoryBufferB; 
-    float   Padding1[2];
+    float   CameraNear;
+    float   CameraFar;
 };
 
 struct ScreenProbeGPU
 {
     uint    ScreenX;
     uint    ScreenY;
+    uint    Padding0;     
+    uint    Padding1;     
     float3  WorldPosition;
+    float   Depth;        
     float3  WorldNormal;
-    float   Depth;
-    float   Validity;
+    float   Validity;     
 };
 
 struct TraceResult
@@ -114,6 +113,10 @@ struct TraceResult
     float   HitDistance;
     float3  HitNormal;
     float   Validity;
+    uint    HitCardIndex;     
+    uint    Padding0;         
+    uint    Padding1;
+    uint    Padding2;
 };
 
 struct ImportanceSampleGPU
@@ -164,17 +167,25 @@ float4x4 InverseMatrix(float4x4 m)
 
 float3 ScreenUVToWorld(float2 screenUV, float depth)
 {
-    float4 clipPos = float4(screenUV * 2.0f - 1.0f, depth, 1.0f);
-    clipPos.y = -clipPos.y;
-    
-    float4 renderPos = mul(ClipToRender, clipPos);    
-    float4 cameraPos = mul(RenderToCamera, renderPos);
-    float4 worldPos = mul(CameraToWorld, cameraPos); 
-    
+    float near = CameraNear;
+    float far = CameraFar;
+    float viewZ = (far * near) / (far - depth * (far - near));
+
+    float2 ndc = screenUV * 2.0 - 1.0;
+    ndc.y = -ndc.y;
+
+    float3 viewPos;
+    viewPos.x = ndc.x * viewZ * ClipToRender[0][0];
+    viewPos.y = ndc.y * viewZ * ClipToRender[1][1];
+    viewPos.z = viewZ;
+
+    float4 cameraPos = mul(RenderToCamera, float4(viewPos, 1.0));
+    float4 worldPos = mul(CameraToWorld, cameraPos);
+
     return worldPos.xyz / worldPos.w;
 }
 
-// 世界坐标到屏幕 UV
+// World position to screen UV
 float2 WorldToScreenUV(float3 worldPos)
 {
     float4 cameraPos = mul(WorldToCamera, float4(worldPos, 1.0f));
@@ -186,10 +197,6 @@ float2 WorldToScreenUV(float3 worldPos)
     return ndc * 0.5f + 0.5f;
 }
 
-//=============================================================================
-// 辅助函数
-//=============================================================================
-
 float3 SafeNormalize(float3 v)
 {
     float len = length(v);
@@ -200,10 +207,6 @@ float Luminance(float3 color)
 {
     return dot(color, float3(0.2126f, 0.7152f, 0.0722f));
 }
-
-//=============================================================================
-// 随机数生成
-//=============================================================================
 
 uint PCGHash(uint input)
 {
@@ -221,10 +224,6 @@ float2 Random2D(uint seed)
 {
     return float2(Random(seed), Random(seed + 1u));
 }
-
-//=============================================================================
-// 半球采样
-//=============================================================================
 
 float3 FibonacciHemisphere(uint index, uint count, float3 normal)
 {
@@ -257,10 +256,6 @@ float3 CosineSampleHemisphere(float2 random, float3 normal)
     return normalize(tangent * localDir.x + bitangent * localDir.y + normal * localDir.z);
 }
 
-//=============================================================================
-// 天空采样
-//=============================================================================
-
 float3 SampleSimpleSky(float3 direction, float intensity)
 {
     float skyGradient = saturate(direction.y * 0.5f + 0.5f);
@@ -269,10 +264,7 @@ float3 SampleSimpleSky(float3 direction, float intensity)
     return lerp(horizonColor, zenithColor, skyGradient) * intensity;
 }
 
-//=============================================================================
-// 八面体编码/解码
-//=============================================================================
-
+// Octahedron encoding/decoding
 float2 DirectionToOctahedronUV(float3 dir)
 {
     dir = normalize(dir);
@@ -302,10 +294,6 @@ float3 OctahedronUVToDirection(float2 uv)
     return normalize(n);
 }
 
-//=============================================================================
-// 权重计算
-//=============================================================================
-
 float ComputeDepthWeight(float pixelDepth, float probeDepth, float scale)
 {
     float depthDiff = abs(pixelDepth - probeDepth);
@@ -316,6 +304,11 @@ float ComputeNormalWeight(float3 pixelNormal, float3 probeNormal, float power)
 {
     float normalDot = saturate(dot(pixelNormal, probeNormal));
     return pow(normalDot, power);
+}
+
+float LinearizeDepth(float depth, float near, float far)
+{
+    return near * far / (far - depth * (far - near));
 }
 
 #endif // SCREENPROBE_COMMON_HLSLI

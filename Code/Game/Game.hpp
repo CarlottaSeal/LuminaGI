@@ -27,6 +27,7 @@ public:
 public:
 	bool m_openDevConsole = false;
 	bool m_isInAttractMode;
+	bool m_mouseFPS = false;
 	Clock* m_gameClock;
 	//Camera m_gameCamera;
 	Camera m_screenCamera;
@@ -51,7 +52,13 @@ private:
 	bool m_hasPlayedAttractSound = false;
 	SoundPlaybackID m_attractSoundID = MISSING_SOUND_ID;
 
+
 	float m_varyTime = 0.f;
+
+	// Sun rotation
+	int m_sunUpdateFrameCounter = 0;
+	float m_sunAngle = 0.f;
+	bool m_sunRotationEnabled = false;
 
 	std::vector<Vertex_PCU> m_gridVertexes;
 };

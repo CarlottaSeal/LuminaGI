@@ -1,32 +1,46 @@
 //=============================================================================
 // BRDFPDFGeneration.hlsl
 // Pass 6.2: BRDF PDF Generation
-// 计算每个 Probe 的 BRDF PDF，投影到 SH2
+// 计算每个 Probe 的 Lambertian BRDF PDF，投影到 SH2
+//
+// 对于 Lambertian BRDF，重要性分布是 clamped cosine lobe：
+//   PDF(ω) ∝ max(0, dot(ω, normal))
+//
+// 这个分布的 SH 投影是解析的 (Zonal Harmonics)：
+//   L0: A0 = π
+//   L1: A1 = 2π/3
 //=============================================================================
 
 #include "ScreenProbeCommon.hlsli"
 #include "ScreenProbeSH.hlsli"
 #include "ScreenProbeRegisters.hlsli"
 
+StructuredBuffer<ScreenProbeGPU> ProbeBuffer : register(REG_PROBE_BUFFER_SRV);
 
-StructuredBuffer<ScreenProbeGPU> ProbeBuffer : register(REG_PROBE_BUFFER_SRV); 
-Texture2D<float>  DepthBuffer  : register(REG_DEPTH_BUFFER);   
-Texture2D<float4> NormalBuffer : register(REG_GBUFFER_NORMAL); 
+RWStructuredBuffer<SH2CoeffsGPU> BRDFPDFOutput : register(REG_BRDF_PDF_UAV);
 
-RWStructuredBuffer<SH2CoeffsGPU> BRDFPDFOutput : register(REG_BRDF_PDF_UAV); // u402
-
-SamplerState PointSampler : register(s0);
-
-
-float ComputePlaneWeight(float3 probePos, float3 probeNormal, float3 samplePos)
+//=============================================================================
+// 计算 Lambertian BRDF 的 SH 投影 (clamped cosine lobe)
+// 这是解析解，不需要采样
+//=============================================================================
+float4 ProjectLambertianBRDF(float3 normal)
 {
-    float planeDist = abs(dot(samplePos - probePos, probeNormal));
-    return exp(-planeDist * PlaneDepthWeight);
-}
+    // 先计算法线方向的 SH 基函数
+    float4 basis = SHBasisFunction2(normal);
 
-float ComputeBRDFImportance(float3 sampleNormal, float3 probeNormal)
-{
-    return saturate(dot(sampleNormal, probeNormal));
+    // Zonal Harmonics 系数 (clamped cosine lobe)
+    // A0 = π (L0 band)
+    // A1 = 2π/3 (L1 band)
+    float A0 = PI;
+    float A1 = 2.0f * PI / 3.0f;
+
+    // 将 ZH 系数应用到旋转后的基函数
+    return float4(
+        basis.x * A0,    // L0
+        basis.y * A1,    // L1_y
+        basis.z * A1,    // L1_z
+        basis.w * A1     // L1_x
+    );
 }
 
 //=============================================================================
@@ -37,18 +51,17 @@ float ComputeBRDFImportance(float3 sampleNormal, float3 probeNormal)
 void main(uint3 dispatchThreadID : SV_DispatchThreadID)
 {
     uint2 probeCoord = dispatchThreadID.xy;
-    
+
     if (probeCoord.x >= ProbeGridWidth || probeCoord.y >= ProbeGridHeight)
         return;
-    
+
     uint probeIndex = probeCoord.y * ProbeGridWidth + probeCoord.x;
     ScreenProbeGPU probe = ProbeBuffer[probeIndex];
-    
-    SH2RGB sh = InitSH();
-    
+
     // 检查 Probe 有效性
     if (probe.Validity <= 0.0f)
     {
+        // 无效探针：使用均匀分布 (只有 L0)
         SH2CoeffsGPU result;
         result.R = float4(SH_L0, 0, 0, 0);
         result.G = float4(SH_L0, 0, 0, 0);
@@ -56,63 +69,17 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
         BRDFPDFOutput[probeIndex] = result;
         return;
     }
-    
-    float3 probeWorldPos = probe.WorldPosition;
-    float3 probeNormal = probe.WorldNormal;
-    
-    int halfSpacing = (int)ProbeSpacing / 2;
-    float totalWeight = 0.0f;
-    
-    [loop]
-    for (int dy = -halfSpacing; dy <= halfSpacing; dy++)
-    {
-        [loop]
-        for (int dx = -halfSpacing; dx <= halfSpacing; dx++)
-        {
-            int2 samplePos = int2(probe.ScreenX, probe.ScreenY) + int2(dx, dy);
-            
-            if (samplePos.x < 0 || samplePos.x >= (int)ScreenWidth ||
-                samplePos.y < 0 || samplePos.y >= (int)ScreenHeight)
-                continue;
-            
-            float sampleDepth = DepthBuffer[samplePos];
-            float3 sampleNormal = NormalBuffer[samplePos].xyz * 2.0f - 1.0f;
-            sampleNormal = SafeNormalize(sampleNormal);
-            
-            if (sampleDepth <= 0.0f || sampleDepth >= 0.9999f)
-                continue;
-            
-            // 重建世界坐标
-            float2 screenUV = (float2(samplePos) + 0.5f) / float2(ScreenWidth, ScreenHeight);
-            float3 sampleWorldPos = ScreenUVToWorld(screenUV, sampleDepth);
-            
-            float planeWeight = ComputePlaneWeight(probeWorldPos, probeNormal, sampleWorldPos);
-            float brdfImportance = ComputeBRDFImportance(sampleNormal, probeNormal);
-            float weight = planeWeight * brdfImportance;
-            
-            if (weight > 0.001f)
-            {
-                ProjectToSHRGB(sampleNormal, float3(weight, weight, weight), sh);
-                totalWeight += weight;
-            }
-        }
-    }
-    
-    // 归一化
-    if (totalWeight > 0.0f)
-    {
-        NormalizeSHRGB(sh, 1.0f / totalWeight);
-    }
-    else
-    {
-        sh = InitSH();
-        ProjectToSHRGB(probeNormal, float3(1, 1, 1), sh);
-    }
-    
-    // 输出
+
+    float3 probeNormal = SafeNormalize(probe.WorldNormal);
+
+    // 计算 Lambertian BRDF 的 SH 投影
+    // 这是解析解，不需要采样周围像素
+    float4 brdfSH = ProjectLambertianBRDF(probeNormal);
+
+    // RGB 通道使用相同的 BRDF（漫反射是颜色无关的）
     SH2CoeffsGPU result;
-    result.R = sh.R;
-    result.G = sh.G;
-    result.B = sh.B;
+    result.R = brdfSH;
+    result.G = brdfSH;
+    result.B = brdfSH;
     BRDFPDFOutput[probeIndex] = result;
 }

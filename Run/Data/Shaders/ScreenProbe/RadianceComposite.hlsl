@@ -1,100 +1,161 @@
 //=============================================================================
-// RadianceComposite.hlsl
-// Pass 6.7: Radiance Composite
-// 从追踪结果采样光照，组合成 Probe Radiance
+// RadianceComposite.hlsl - Sample lighting and compose probe radiance
 //=============================================================================
 
 #include "ScreenProbeCommon.hlsli"
 #include "ScreenProbeRegisters.hlsli"
 
-//=============================================================================
-// 资源绑定 - 使用 Bindless 寄存器号
-//=============================================================================
+struct SurfaceCardMetadata
+{
+    uint AtlasX;
+    uint AtlasY;
+    uint ResolutionX;
+    uint ResolutionY;
 
-StructuredBuffer<ScreenProbeGPU> ProbeBuffer : register(REG_PROBE_BUFFER_SRV);         // t401
-StructuredBuffer<ImportanceSampleGPU> SampleDirections : register(REG_SAMPLE_DIR_SRV); // t410
-StructuredBuffer<TraceResult> VoxelTraceResults : register(REG_VOXEL_TRACE_SRV);       // t414
-Texture3D<float4> VoxelLighting : register(REG_VOXEL_LIGHTING_SRV);                    // t379
+    float3 Origin;
+    float Padding0;
 
-RWTexture2D<float4> ProbeRadiance : register(REG_PROBE_RAD_UAV); // u415
+    float3 AxisX;
+    float Padding1;
+
+    float3 AxisY;
+    float Padding2;
+
+    float3 Normal;
+    float Padding3;
+
+    float WorldSizeX;
+    float WorldSizeY;
+    uint Direction;
+    uint GlobalCardID;
+
+    uint4 LightMask;
+};
+
+StructuredBuffer<ScreenProbeGPU> ProbeBuffer : register(REG_PROBE_BUFFER_SRV);
+StructuredBuffer<ImportanceSampleGPU> SampleDirections : register(REG_SAMPLE_DIR_SRV);
+StructuredBuffer<TraceResult> VoxelTraceResults : register(REG_VOXEL_TRACE_SRV);
+StructuredBuffer<TraceResult> MeshTraceResults : register(REG_MESH_TRACE_SRV);
+Texture3D<float4> VoxelLighting : register(REG_VOXEL_LIGHTING_SRV);
+Texture2DArray<float4> SurfaceCacheAtlas : register(REG_SURFACE_ATLAS_SRV);
+StructuredBuffer<SurfaceCardMetadata> CardMetadata : register(REG_CARD_METADATA_SRV);
+
+RWTexture2D<float4> ProbeRadiance : register(REG_PROBE_RAD_UAV);
 
 SamplerState LinearSampler : register(s1);
 
-//=============================================================================
-// 辅助函数
-//=============================================================================
+#define SURFACE_CACHE_COMBINED_LAYER 5
+
+float3 ClampSourceRadiance(float3 color)
+{
+    const float MAX_SOURCE_LUM = 5.0f;
+    float lum = max(max(color.r, color.g), color.b);
+    if (lum > MAX_SOURCE_LUM)
+        return color * (MAX_SOURCE_LUM / lum);
+
+    if (any(isnan(color)) || any(isinf(color)))
+        return float3(0, 0, 0);
+
+    return color;
+}
+
+float3 SampleSurfaceCacheLighting(float3 worldPos, uint cardIndex)
+{
+    if (cardIndex == 0xFFFFFFFF)
+        return float3(0, 0, 0);
+
+    SurfaceCardMetadata card = CardMetadata[cardIndex];
+
+    float3 toPos = worldPos - card.Origin;
+    float u = dot(toPos, card.AxisX) / card.WorldSizeX + 0.5f;
+    float v = dot(toPos, card.AxisY) / card.WorldSizeY + 0.5f;
+
+    if (u < 0.0f || u > 1.0f || v < 0.0f || v > 1.0f)
+        return float3(0, 0, 0);
+
+    float2 atlasUV = float2(
+        (float(card.AtlasX) + u * float(card.ResolutionX)) / float(AtlasWidth),
+        (float(card.AtlasY) + v * float(card.ResolutionY)) / float(AtlasHeight)
+    );
+
+    float3 result = SurfaceCacheAtlas.SampleLevel(LinearSampler, float3(atlasUV, SURFACE_CACHE_COMBINED_LAYER), 0).rgb;
+    return ClampSourceRadiance(result);
+}
 
 float3 SampleVoxelLighting(float3 worldPos)
 {
     float3 voxelUV = (worldPos - VoxelGridMin) / (VoxelGridMax - VoxelGridMin);
-    
+
     if (any(voxelUV < 0.0f) || any(voxelUV > 1.0f))
         return float3(0, 0, 0);
-    
-    return VoxelLighting.SampleLevel(LinearSampler, voxelUV, 0).rgb;
+
+    float3 result = VoxelLighting.SampleLevel(LinearSampler, voxelUV, 0).rgb;
+    return ClampSourceRadiance(result);
 }
 
-//=============================================================================
-// 主计算着色器
-//=============================================================================
+uint2 OctUVToTexelWithBorder(float2 octUV, uint2 probeCoord)
+{
+    uint2 localTexel = uint2(octUV * float(OctahedronSize));
+    localTexel = clamp(localTexel, uint2(0, 0), uint2(OctahedronSize - 1, OctahedronSize - 1));
+    localTexel += uint2(OctahedronBorder, OctahedronBorder);
+    uint2 probeBase = probeCoord * BorderedOctSize;
+    return probeBase + localTexel;
+}
 
-[numthreads(8, 8, 1)]
+[numthreads(16, 16, 1)]
 void main(uint3 dispatchThreadID : SV_DispatchThreadID)
 {
     uint2 rayTexCoord = dispatchThreadID.xy;
-    
+
     if (rayTexCoord.x >= RaysTexWidth || rayTexCoord.y >= RaysTexHeight)
         return;
-    
-    // 计算 Probe 和 Ray 索引
-    uint2 probeCoord = rayTexCoord / 8;
-    uint2 localRayCoord = rayTexCoord % 8;
+
+    uint2 probeCoord = uint2(rayTexCoord.x / OctahedronWidth, rayTexCoord.y / OctahedronHeight);
+    uint2 localRayCoord = uint2(rayTexCoord.x % OctahedronWidth, rayTexCoord.y % OctahedronHeight);
     uint rayIndex = localRayCoord.y * 8 + localRayCoord.x;
-    
+
     if (probeCoord.x >= ProbeGridWidth || probeCoord.y >= ProbeGridHeight)
         return;
-    
+
     uint probeIndex = probeCoord.y * ProbeGridWidth + probeCoord.x;
     uint globalRayIndex = probeIndex * RaysPerProbe + rayIndex;
-    
+
     ScreenProbeGPU probe = ProbeBuffer[probeIndex];
-    
-    if (probe.Validity <= 0.0f || rayIndex >= RaysPerProbe)
+
+    if (probe.Validity < 0.001f || rayIndex >= RaysPerProbe)
     {
         ProbeRadiance[rayTexCoord] = float4(0, 0, 0, 0);
         return;
     }
-    
+
     ImportanceSampleGPU sampleData = SampleDirections[globalRayIndex];
     float3 rayDir = sampleData.Direction;
-    float pdf = sampleData.PDF;
-    
-    if (length(rayDir) < 0.001f || pdf < 0.001f)
+
+    if (length(rayDir) < 0.001f)
     {
         ProbeRadiance[rayTexCoord] = float4(0, 0, 0, 0);
         return;
     }
-    
-    TraceResult traceResult = VoxelTraceResults[globalRayIndex];
-    
-    float3 radiance = float3(0, 0, 0);
-    
-    if (traceResult.Validity > 0.0f)
+
+    TraceResult meshResult = MeshTraceResults[globalRayIndex];
+    TraceResult voxelResult = VoxelTraceResults[globalRayIndex];
+
+    float3 voxelRadiance = float3(0, 0, 0);
+
+    if (meshResult.Validity > 0.0f && meshResult.HitDistance > 0.001f)
     {
-        // 命中：采样 Voxel Lighting
-        radiance = SampleVoxelLighting(traceResult.HitPosition);
+        voxelRadiance = SampleVoxelLighting(meshResult.HitPosition);
     }
-    else
+    else if (voxelResult.Validity > 0.0f && voxelResult.HitDistance > 0.001f)
     {
-        // 未命中：天空光
-        radiance = SampleSimpleSky(rayDir, SkyIntensity);
+        voxelRadiance = SampleVoxelLighting(voxelResult.HitPosition);
     }
-    
-    // Cosine 加权
-    float cosWeight = saturate(dot(rayDir, probe.WorldNormal));
-    
-    // 重要性采样校正
-    float weight = cosWeight / max(pdf, 0.001f);
-    
-    ProbeRadiance[rayTexCoord] = float4(radiance * weight, weight);
+
+    float3 radiance = float3(0.02f, 0.02f, 0.02f);
+    if (Luminance(voxelRadiance) > 0.001f)
+    {
+        radiance = voxelRadiance;
+    }
+
+    ProbeRadiance[rayTexCoord] = float4(radiance, 1.0f);
 }

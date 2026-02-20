@@ -16,7 +16,7 @@
 #define REG_GBUFFER_ALBEDO      t214
 #define REG_GBUFFER_NORMAL      t215
 #define REG_GBUFFER_MATERIAL    t216
-#define REG_GBUFFER_MOTION      t217
+#define REG_GBUFFER_WORLDPOS     t217
 // Depth (t218)
 #define REG_DEPTH_BUFFER        t218
 
@@ -29,37 +29,38 @@
 #define REG_VOXEL_LIGHTING_UAV  u376
 #define REG_VISIBILITY_UAV      u377
 
-// SRVs (378-382)
+// SRVs (378-383)
 #define REG_GLOBAL_SDF_SRV      t378
 #define REG_VOXEL_LIGHTING_SRV  t379   // Texture3D
 #define REG_INSTANCE_INFO_SRV   t380   // Buffer
 #define REG_SURFACE_ATLAS_SRV   t381   // Texture2DArray
 #define REG_CARD_METADATA_SRV   t382   // StructuredBuffer
+#define REG_VOXEL_VISIBILITY_SRV t383  // Buffer<uint> - Voxel visibility for early rejection
 
 //=============================================================================
-// Surface Radiosity 资源 (从 384 开始)
-// UAVs: 384-391, SRVs: 392-399
+// Surface Radiosity 资源 (从 385 开始)
+// UAVs: 385-392, SRVs: 393-400
 //=============================================================================
 
-// UAVs 连续 (384-391)
-#define REG_RAD_TRACE_RESULT_UAV   u384
-#define REG_RAD_HISTORY_UAV        u385
-#define REG_RAD_FILTERED_UAV       u386
-#define REG_RAD_SH_R_UAV           u387
-#define REG_RAD_SH_G_UAV           u388
-#define REG_RAD_SH_B_UAV           u389
-#define REG_RAD_PROBE_DEPTH_UAV    u390
-#define REG_RAD_PROBE_NORMAL_UAV   u391
+// UAVs 连续 (385-392)
+#define REG_RAD_TRACE_RESULT_UAV   u385
+#define REG_RAD_HISTORY_UAV        u386
+#define REG_RAD_FILTERED_UAV       u387
+#define REG_RAD_SH_R_UAV           u388
+#define REG_RAD_SH_G_UAV           u389
+#define REG_RAD_SH_B_UAV           u390
+#define REG_RAD_PROBE_DEPTH_UAV    u391
+#define REG_RAD_PROBE_NORMAL_UAV   u392
 
-// SRVs 连续 (392-399)
-#define REG_RAD_TRACE_RESULT_SRV   t392
-#define REG_RAD_HISTORY_SRV        t393
-#define REG_RAD_FILTERED_SRV       t394
-#define REG_RAD_SH_R_SRV           t395
-#define REG_RAD_SH_G_SRV           t396
-#define REG_RAD_SH_B_SRV           t397
-#define REG_RAD_PROBE_DEPTH_SRV    t398
-#define REG_RAD_PROBE_NORMAL_SRV   t399
+// SRVs 连续 (393-400)
+#define REG_RAD_TRACE_RESULT_SRV   t393
+#define REG_RAD_HISTORY_SRV        t394
+#define REG_RAD_FILTERED_SRV       t395
+#define REG_RAD_SH_R_SRV           t396
+#define REG_RAD_SH_G_SRV           t397
+#define REG_RAD_SH_B_SRV           t398
+#define REG_RAD_PROBE_DEPTH_SRV    t399
+#define REG_RAD_PROBE_NORMAL_SRV   t400
 
 //=============================================================================
 // Screen Probe 资源 (从 400 开始)
@@ -98,5 +99,9 @@
 #define REG_OCT_SH_B_SRV                  t429
 #define REG_INDIRECT_LIGHT_SRV            t430
 #define REG_PROBE_RAD_HIST_B_SRV          t431
+
+// Screen Indirect Raw (FinalGather 原始输出，时间滤波前)
+#define REG_INDIRECT_RAW_UAV              u433
+#define REG_INDIRECT_RAW_SRV              t434
 
 #endif // SCREENPROBE_REGISTERS_HLSLI

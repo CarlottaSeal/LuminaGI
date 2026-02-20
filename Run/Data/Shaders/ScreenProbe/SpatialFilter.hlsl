@@ -1,85 +1,71 @@
 //=============================================================================
 // SpatialFilter.hlsl
-// Pass 6.9: Spatial Filter
-// 空间滤波降噪
+// 5-neighbor spatial averaging
 //=============================================================================
 
 #include "ScreenProbeCommon.hlsli"
 #include "ScreenProbeRegisters.hlsli"
 
-//=============================================================================
-// 资源绑定 - 使用 Bindless 寄存器号
-//=============================================================================
+Texture2D<float4> ProbeRadiance : register(REG_PROBE_RAD_SRV);
+Texture2D<float>  DepthBuffer : register(REG_DEPTH_BUFFER);
 
-Texture2D<float4> ProbeRadianceInput : register(REG_PROBE_RAD_HIST_SRV);       // t418
-StructuredBuffer<ScreenProbeGPU> ProbeBuffer : register(REG_PROBE_BUFFER_SRV); // t401
+StructuredBuffer<ScreenProbeGPU> ProbeBuffer : register(REG_PROBE_BUFFER_SRV);
 
-RWTexture2D<float4> ProbeRadianceFiltered : register(REG_PROBE_RAD_FILT_UAV);  // u419
-
-//=============================================================================
-// 主计算着色器
-//=============================================================================
+RWTexture2D<float4> ProbeRadianceFiltered : register(REG_PROBE_RAD_FILT_UAV);
 
 [numthreads(8, 8, 1)]
-void main(uint3 dispatchThreadID : SV_DispatchThreadID)
+void main(uint3 groupID : SV_GroupID, uint3 groupThreadID : SV_GroupThreadID)
 {
-    uint2 rayTexCoord = dispatchThreadID.xy;
-    
-    if (rayTexCoord.x >= RaysTexWidth || rayTexCoord.y >= RaysTexHeight)
+    uint2 probeCoord = groupID.xy;
+    uint2 localCoord = groupThreadID.xy;
+
+    if (probeCoord.x >= ProbeGridWidth || probeCoord.y >= ProbeGridHeight)
         return;
-    
-    // 3x3 高斯核
-    static const float kernel[3][3] = {
-        { 0.0625f, 0.125f, 0.0625f },
-        { 0.125f,  0.25f,  0.125f  },
-        { 0.0625f, 0.125f, 0.0625f }
-    };
-    
-    float4 center = ProbeRadianceInput[rayTexCoord];
-    
-    if (center.w <= 0.0f)
+
+    uint probeIndex = probeCoord.y * ProbeGridWidth + probeCoord.x;
+    ScreenProbeGPU probe = ProbeBuffer[probeIndex];
+
+    // OctahedronWidth x OctahedronHeight per probe layout
+    uint2 rayTexCoord = probeCoord * uint2(OctahedronWidth, OctahedronHeight) + localCoord;
+
+    if (probe.Validity < 0.001f || probe.Depth == 0.0f)
     {
         ProbeRadianceFiltered[rayTexCoord] = float4(0, 0, 0, 0);
         return;
     }
-    
-    float3 sum = float3(0, 0, 0);
-    float weightSum = 0.0f;
-    
+
+    float4 centerSample = ProbeRadiance[rayTexCoord];
+    float3 totalRadiance = centerSample.rgb;
+    float totalWeight = 1.0f;
+
+    int2 offsets[4] = { int2(-1, 0), int2(1, 0), int2(0, -1), int2(0, 1) };
+
     [unroll]
-    for (int dy = -1; dy <= 1; dy++)
+    for (uint i = 0; i < 4; i++)
     {
-        [unroll]
-        for (int dx = -1; dx <= 1; dx++)
+        int2 neighborProbeCoord = int2(probeCoord) + offsets[i];
+
+        if (neighborProbeCoord.x < 0 || neighborProbeCoord.x >= (int)ProbeGridWidth ||
+            neighborProbeCoord.y < 0 || neighborProbeCoord.y >= (int)ProbeGridHeight)
+            continue;
+
+        uint neighborProbeIndex = neighborProbeCoord.y * ProbeGridWidth + neighborProbeCoord.x;
+        ScreenProbeGPU neighborProbe = ProbeBuffer[neighborProbeIndex];
+
+        if (neighborProbe.Validity > 0.001f && neighborProbe.Depth != 0.0f)
         {
-            int2 sampleCoord = int2(rayTexCoord) + int2(dx, dy);
-            
-            if (sampleCoord.x >= 0 && sampleCoord.x < (int)RaysTexWidth &&
-                sampleCoord.y >= 0 && sampleCoord.y < (int)RaysTexHeight)
-            {
-                float4 sample = ProbeRadianceInput[sampleCoord];
-                float spatialWeight = kernel[dy + 1][dx + 1];
-                
-                if (sample.w > 0.0f)
-                {
-                    // 颜色相似性权重
-                    float colorDist = length(sample.rgb - center.rgb);
-                    float rangeWeight = exp(-colorDist * colorDist * DepthWeightScale);
-                    
-                    float w = spatialWeight * rangeWeight;
-                    sum += sample.rgb * w;
-                    weightSum += w;
-                }
-            }
+            int2 neighborTexCoord = neighborProbeCoord * int2(OctahedronWidth, OctahedronHeight) + int2(localCoord);
+            float3 neighborRadiance = ProbeRadiance[neighborTexCoord].rgb;
+
+            totalRadiance += neighborRadiance;
+            totalWeight += 1.0f;
         }
     }
-    
-    if (weightSum > 0.001f)
-    {
-        ProbeRadianceFiltered[rayTexCoord] = float4(sum / weightSum, 1.0f);
-    }
-    else
-    {
-        ProbeRadianceFiltered[rayTexCoord] = center;
-    }
+
+    float3 filteredRadiance = totalRadiance / totalWeight;
+
+    if (any(isnan(filteredRadiance)) || any(isinf(filteredRadiance)))
+        filteredRadiance = float3(0, 0, 0);
+
+    ProbeRadianceFiltered[rayTexCoord] = float4(filteredRadiance, 1.0f);
 }

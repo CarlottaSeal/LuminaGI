@@ -1,156 +1,128 @@
 //=============================================================================
-// FinalGather.hlsl
-// Pass 6.10: Final Gather
-// 最终整合：从 Probe 插值到每个屏幕像素
+// FinalGather.hlsl - 5-probe averaging, Diffuse GI only
 //=============================================================================
 
 #include "ScreenProbeCommon.hlsli"
 #include "ScreenProbeRegisters.hlsli"
 
-Texture2D<float>  DepthBuffer   : register(REG_DEPTH_BUFFER);        // t218
-Texture2D<float4> NormalBuffer  : register(REG_GBUFFER_NORMAL);      // t201
-Texture2D<float4> AlbedoBuffer  : register(REG_GBUFFER_ALBEDO);      // t203
-Texture2D<float4> ProbeRadianceFiltered : register(REG_PROBE_RAD_FILT_SRV); // t420
-StructuredBuffer<ScreenProbeGPU> ProbeBuffer : register(REG_PROBE_BUFFER_SRV); // t401
+Texture2D<float>  DepthBuffer   : register(REG_DEPTH_BUFFER);
+Texture2D<float4> NormalBuffer  : register(REG_GBUFFER_NORMAL);
+Texture2D<float4> AlbedoBuffer  : register(REG_GBUFFER_ALBEDO);
+Texture2D<float4> ProbeIrradiance : register(REG_PROBE_RAD_SRV);
+Texture2D<float4> MaterialBuffer : register(REG_GBUFFER_MATERIAL);
+Texture3D<float4> VoxelLighting : register(REG_VOXEL_LIGHTING_SRV);
 
-RWTexture2D<float4> ScreenIndirectLighting : register(REG_INDIRECT_LIGHT_UAV); // u427
+RWTexture2D<float4> ScreenIndirectRaw : register(REG_INDIRECT_RAW_UAV);
 
 SamplerState LinearSampler : register(s1);
-SamplerState PointSampler  : register(s0);
 
-//=============================================================================
-// 辅助函数
-//=============================================================================
-
-// 从 Probe Radiance 纹理采样（双线性插值 Probe 之间）
-float3 SampleProbeRadiance(uint2 probeCoord, float3 normal)
+float3 GetScreenProbeIrradiance(uint2 probeCoord, float2 probeUV)
 {
     if (probeCoord.x >= ProbeGridWidth || probeCoord.y >= ProbeGridHeight)
         return float3(0, 0, 0);
-    
-    // 简化：采样 Probe 中心的平均辐射度
-    // 完整实现应该根据方向采样 Octahedron
-    uint2 rayTexBase = probeCoord * 8;
-    
-    float3 totalRadiance = float3(0, 0, 0);
-    float totalWeight = 0.0f;
-    
-    // 平均 8x8 区域（简化版）
-    [unroll]
-    for (uint y = 0; y < 8; y += 2)
-    {
-        [unroll]
-        for (uint x = 0; x < 8; x += 2)
-        {
-            uint2 sampleCoord = rayTexBase + uint2(x, y);
-            float4 sample = ProbeRadianceFiltered[sampleCoord];
-            
-            if (sample.w > 0.0f)
-            {
-                totalRadiance += sample.rgb;
-                totalWeight += 1.0f;
-            }
-        }
-    }
-    
-    if (totalWeight > 0.0f)
-        return totalRadiance / totalWeight;
-    
-    return float3(0, 0, 0);
+
+    float2 probeSize = float2(OctahedronWidth, OctahedronHeight);
+    float2 subPos = probeUV * (probeSize - 1.0f) + 1.0f;
+    float2 texelUV = (float2(probeCoord) * probeSize + subPos) / float2(RaysTexWidth, RaysTexHeight);
+
+    float3 result = ProbeIrradiance.SampleLevel(LinearSampler, texelUV, 0).rgb;
+
+    float lum = max(max(result.r, result.g), result.b);
+    const float MAX_LUM = 2.0f;
+    if (lum > MAX_LUM)
+        result *= MAX_LUM / lum;
+
+    return result;
 }
 
-//=============================================================================
-// 主计算着色器
-//=============================================================================
+float3 SampleVoxelLightingSimple(float3 worldPos, float3 normal)
+{
+    float3 uvScale = 1.0f / (VoxelGridMax - VoxelGridMin);
+    float3 voxelUV = (worldPos - VoxelGridMin) * uvScale;
+
+    if (any(voxelUV < 0.0f) || any(voxelUV > 1.0f))
+        return float3(0.05f, 0.05f, 0.05f);
+
+    float3 irradiance = float3(0, 0, 0);
+    float3 offsets[3] = { float3(0,0,0), normal * VoxelSize * 2.0f, normal * VoxelSize * 5.0f };
+
+    for (int i = 0; i < 3; i++)
+    {
+        float3 sampleUV = (worldPos + offsets[i] - VoxelGridMin) * uvScale;
+        if (all(sampleUV >= 0.0f) && all(sampleUV <= 1.0f))
+        {
+            irradiance += VoxelLighting.SampleLevel(LinearSampler, sampleUV, 0).rgb;
+        }
+    }
+
+    return irradiance / 3.0f;
+}
 
 [numthreads(8, 8, 1)]
 void main(uint3 dispatchThreadID : SV_DispatchThreadID)
 {
     uint2 screenCoord = dispatchThreadID.xy;
-    
+
     if (screenCoord.x >= ScreenWidth || screenCoord.y >= ScreenHeight)
         return;
-    
+
     float depth = DepthBuffer[screenCoord];
-    
-    // 天空像素
+
     if (depth <= 0.0f || depth >= 0.9999f)
     {
-        ScreenIndirectLighting[screenCoord] = float4(0, 0, 0, 0);
+        ScreenIndirectRaw[screenCoord] = float4(0, 0, 0, 0);
         return;
     }
-    
-    float3 normal = NormalBuffer[screenCoord].xyz * 2.0f - 1.0f;
-    normal = SafeNormalize(normal);
-    
+
+    float3 normal = SafeNormalize(NormalBuffer[screenCoord].xyz * 2.0f - 1.0f);
     float3 albedo = AlbedoBuffer[screenCoord].rgb;
-    
-    // 计算像素在 Probe Grid 中的位置
-    float2 probeUV = float2(screenCoord) / float(ProbeSpacing);
-    
-    // 双线性插值的 4 个 Probe
-    int2 probeCoord00 = int2(floor(probeUV - 0.5f));
-    int2 probeCoord10 = probeCoord00 + int2(1, 0);
-    int2 probeCoord01 = probeCoord00 + int2(0, 1);
-    int2 probeCoord11 = probeCoord00 + int2(1, 1);
-    
-    float2 bilinearWeights = frac(probeUV - 0.5f);
-    float w00 = (1.0f - bilinearWeights.x) * (1.0f - bilinearWeights.y);
-    float w10 = bilinearWeights.x * (1.0f - bilinearWeights.y);
-    float w01 = (1.0f - bilinearWeights.x) * bilinearWeights.y;
-    float w11 = bilinearWeights.x * bilinearWeights.y;
-    
+    float metallic = MaterialBuffer[screenCoord].g;
+
+    float2 screenUV = (float2(screenCoord) + 0.5f) / float2(ScreenWidth, ScreenHeight);
+    float3 worldPos = ScreenUVToWorld(screenUV, depth);
+
+    float2 probeUV = DirectionToOctahedronUV(normal);
+    uint2 probeCoord = screenCoord / ProbeSpacing;
+
+    // 5-probe averaging
+    int2 offsets[5] = { int2(0, 0), int2(0, 1), int2(0, -1), int2(1, 0), int2(-1, 0) };
+
     float3 totalRadiance = float3(0, 0, 0);
-    float totalWeight = 0.0f;
-    
-    int2 probeCoords[4] = { probeCoord00, probeCoord10, probeCoord01, probeCoord11 };
-    float bilinearW[4] = { w00, w10, w01, w11 };
-    
+    float validCount = 0.0f;
+
     [unroll]
-    for (int i = 0; i < 4; i++)
+    for (uint i = 0; i < 5; i++)
     {
-        int2 pc = probeCoords[i];
-        
-        if (pc.x < 0 || pc.x >= (int)ProbeGridWidth ||
-            pc.y < 0 || pc.y >= (int)ProbeGridHeight)
-            continue;
-        
-        uint probeIndex = pc.y * ProbeGridWidth + pc.x;
-        ScreenProbeGPU probe = ProbeBuffer[probeIndex];
-        
-        if (probe.Validity <= 0.0f)
-            continue;
-        
-        // 深度权重
-        float depthDiff = abs(depth - probe.Depth);
-        float depthWeight = exp(-depthDiff * DepthWeightScale);
-        
-        // 法线权重
-        float normalDot = saturate(dot(normal, probe.WorldNormal));
-        float normalWeight = pow(normalDot, NormalWeightScale);
-        
-        float weight = bilinearW[i] * depthWeight * normalWeight;
-        
-        if (weight > 0.001f)
+        int2 pc = int2(probeCoord) + offsets[i];
+
+        if (pc.x >= 0 && pc.x < (int)ProbeGridWidth &&
+            pc.y >= 0 && pc.y < (int)ProbeGridHeight)
         {
-            float3 radiance = SampleProbeRadiance(uint2(pc), normal);
-            totalRadiance += radiance * weight;
-            totalWeight += weight;
+            totalRadiance += GetScreenProbeIrradiance(uint2(pc), probeUV);
+            validCount += 1.0f;
         }
     }
-    
-    float3 finalRadiance = float3(0, 0, 0);
-    if (totalWeight > 0.0f)
+
+    float3 diffuseIrradiance;
+    if (validCount > 0.5f)
     {
-        finalRadiance = totalRadiance / totalWeight;
+        diffuseIrradiance = totalRadiance / validCount / PI;
     }
-    
-    // 应用 Albedo 和强度
-    float3 indirectLight = finalRadiance * albedo * IndirectIntensity;
-    
-    // 简单的 AO
-    float ao = 1.0f - AOStrength * (1.0f - saturate(Luminance(finalRadiance)));
-    indirectLight *= ao;
-    
-    ScreenIndirectLighting[screenCoord] = float4(indirectLight, 1.0f);
+    else
+    {
+        diffuseIrradiance = SampleVoxelLightingSimple(worldPos, normal);
+    }
+
+    float3 c_diff = albedo * (1.0f - metallic);
+    float3 indirectLight = c_diff * diffuseIrradiance * IndirectIntensity;
+
+    float indirectLum = max(max(indirectLight.r, indirectLight.g), indirectLight.b);
+    const float MAX_INDIRECT = 1.0f;
+    if (indirectLum > MAX_INDIRECT)
+        indirectLight *= MAX_INDIRECT / indirectLum;
+
+    if (any(isnan(indirectLight)) || any(isinf(indirectLight)))
+        indirectLight = float3(0, 0, 0);
+
+    ScreenIndirectRaw[screenCoord] = float4(indirectLight, 1.0f);
 }
