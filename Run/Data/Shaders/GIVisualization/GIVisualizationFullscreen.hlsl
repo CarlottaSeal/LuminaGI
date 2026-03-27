@@ -11,6 +11,7 @@
 #define VIZ_SCREEN_PROBE_RADIANCE_OCT   13
 #define VIZ_SCREEN_PROBE_FILTERED       14
 #define VIZ_MESH_SDF_NORMAL             15
+#define VIZ_PROBE_AO                    16
 
 cbuffer VisualizationCB : register(b0)
 {
@@ -977,6 +978,16 @@ void CSMain(uint3 dispatchID : SV_DispatchThreadID)
             break;
         }
         
+        case VIZ_PROBE_AO:
+        {
+            if (!isSky)
+            {
+                float ao = g_ScreenIndirectLighting[pixelCoord].a;
+                result = float3(ao, ao, ao);
+            }
+            break;
+        }
+
         default:
             result = float3(1, 0, 1);  // Magenta = unknown mode
             break;

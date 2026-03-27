@@ -157,5 +157,16 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
         radiance = voxelRadiance;
     }
 
-    ProbeRadiance[rayTexCoord] = float4(radiance, 1.0f);
+    // Probe-based AO: derive occlusion from ray hit distance
+    float closestHitDist = TraceMaxDistance;
+    if (meshResult.Validity > 0.0f && meshResult.HitDistance > 0.001f)
+        closestHitDist = min(closestHitDist, meshResult.HitDistance);
+    if (voxelResult.Validity > 0.0f && voxelResult.HitDistance > 0.001f)
+        closestHitDist = min(closestHitDist, voxelResult.HitDistance);
+
+    // Closer hits = more occlusion (0 = fully occluded, 1 = open)
+    const float AO_RADIUS = 3.0f;
+    float aoValue = saturate(closestHitDist / AO_RADIUS);
+
+    ProbeRadiance[rayTexCoord] = float4(radiance, aoValue);
 }

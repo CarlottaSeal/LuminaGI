@@ -36,6 +36,7 @@ void main(uint3 groupID : SV_GroupID, uint3 groupThreadID : SV_GroupThreadID)
 
     float4 centerSample = ProbeRadiance[rayTexCoord];
     float3 totalRadiance = centerSample.rgb;
+    float totalAO = centerSample.a;
     float totalWeight = 1.0f;
 
     int2 offsets[4] = { int2(-1, 0), int2(1, 0), int2(0, -1), int2(0, 1) };
@@ -54,18 +55,29 @@ void main(uint3 groupID : SV_GroupID, uint3 groupThreadID : SV_GroupThreadID)
 
         if (neighborProbe.Validity > 0.001f && neighborProbe.Depth != 0.0f)
         {
-            int2 neighborTexCoord = neighborProbeCoord * int2(OctahedronWidth, OctahedronHeight) + int2(localCoord);
-            float3 neighborRadiance = ProbeRadiance[neighborTexCoord].rgb;
+            // Bilateral weight: reject neighbors on different surfaces
+            float planeDist = abs(dot(probe.WorldPosition - neighborProbe.WorldPosition, probe.WorldNormal));
+            float depthWeight = exp(-planeDist * DepthWeightScale);
+            float normalWeight = pow(saturate(dot(probe.WorldNormal, neighborProbe.WorldNormal)), NormalWeightScale);
+            float weight = depthWeight * normalWeight;
 
-            totalRadiance += neighborRadiance;
-            totalWeight += 1.0f;
+            if (weight > 0.001f)
+            {
+                int2 neighborTexCoord = neighborProbeCoord * int2(OctahedronWidth, OctahedronHeight) + int2(localCoord);
+                float4 neighborSample = ProbeRadiance[neighborTexCoord];
+
+                totalRadiance += neighborSample.rgb * weight;
+                totalAO += neighborSample.a * weight;
+                totalWeight += weight;
+            }
         }
     }
 
     float3 filteredRadiance = totalRadiance / totalWeight;
+    float filteredAO = totalAO / totalWeight;
 
     if (any(isnan(filteredRadiance)) || any(isinf(filteredRadiance)))
         filteredRadiance = float3(0, 0, 0);
 
-    ProbeRadianceFiltered[rayTexCoord] = float4(filteredRadiance, 1.0f);
+    ProbeRadianceFiltered[rayTexCoord] = float4(filteredRadiance, filteredAO);
 }

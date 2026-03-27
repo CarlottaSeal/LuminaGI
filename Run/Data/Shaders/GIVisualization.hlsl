@@ -18,7 +18,7 @@
 #define VIZ_RADIOSITY_TRACE             14  // Radiosity Trace Result
 
 #define VIZ_PROBE_RADIANCE              15  // Screen Probe Radiance
-#define VIZ_PROBE_RADIANCE_FILTERED     16  // Screen Probe Radiance Filtered
+#define VIZ_PROBE_AO                    16  // Probe-based AO
 
 #define VIZ_SHADOW_MAP                  17  // Shadow Map
 #define VIZ_MESH_SDF_NORMAL             18  // Mesh SDF Normal
@@ -77,7 +77,6 @@ Texture2D<float> g_ShadowMap : register(t384);  // SHADOW_MAP_SRV
 Texture2D<float4> g_RadiosityTraceResult : register(t393);
 
 Texture2D<float4> g_ProbeRadiance : register(t424);
-Texture2D<float4> g_ProbeRadianceFiltered : register(t426);
 Texture2D<float4> g_ScreenIndirectLighting : register(t430);
 
 SamplerState g_PointSampler : register(s0);
@@ -207,13 +206,10 @@ void CSMain(uint3 dispatchID : SV_DispatchThreadID)
                 float shadow = SampleShadowPCF(worldPos, worldNormal);
                 float3 directLighting = CalculateDirectLighting(worldPos, worldNormal, albedo, shadow);
                 directLighting *= g_DirectIntensity;
-                
+
+                // FinalGather already baked albedo, IndirectIntensity, and AO — use directly
                 float3 indirectLighting = g_ScreenIndirectLighting[pixelCoord].rgb;
-                indirectLighting *= g_IndirectIntensity;
-                indirectLighting *= lerp(1.0, ao, g_AOStrength);
-                float3 diffuseColor = albedo * (1.0 - metallic);
-                indirectLighting *= diffuseColor;
-                
+
                 result = directLighting + indirectLighting;
                 result = ToneMapACES(result);
                 result = pow(saturate(result), 1.0 / 2.2);
@@ -238,11 +234,8 @@ void CSMain(uint3 dispatchID : SV_DispatchThreadID)
         {
             if (!isSky)
             {
-                float3 indirectLighting = g_ScreenIndirectLighting[pixelCoord].rgb;
-                indirectLighting *= g_IndirectIntensity;
-                indirectLighting *= lerp(1.0, ao, g_AOStrength);
-                float3 diffuseColor = albedo * (1.0 - metallic);
-                result = indirectLighting * diffuseColor;
+                // FinalGather already baked albedo, IndirectIntensity, and AO — use directly
+                result = g_ScreenIndirectLighting[pixelCoord].rgb;
                 result = ToneMapACES(result);
                 result = pow(saturate(result), 1.0 / 2.2);
             }
@@ -352,10 +345,15 @@ void CSMain(uint3 dispatchID : SV_DispatchThreadID)
             break;
         }
         
-        case VIZ_PROBE_RADIANCE_FILTERED:
+        case VIZ_PROBE_AO:
         {
-            uint2 atlasCoord = GetProbeAtlasCoord(pixelCoord);
-            result = g_ProbeRadianceFiltered[atlasCoord].rgb;
+            // DEBUG TEST: 先确认这个 case 有没有被执行到
+            result = float3(0, 1, 0);  // 纯绿色 = mode 正确到达
+            if (!isSky)
+            {
+                float ao = g_ScreenIndirectLighting[pixelCoord].a;
+                result = float3(ao, ao, ao);
+            }
             break;
         }
         

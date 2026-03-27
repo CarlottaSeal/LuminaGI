@@ -107,7 +107,10 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
             if (any(isnan(irradiance)) || any(isinf(irradiance)))
                 irradiance = float3(0, 0, 0);
 
-            OctIrradianceOutput[texelPos] = float4(irradiance, 1.0f);
+            // Pass through per-direction AO from spatial filter
+            float texelAO = ProbeRadianceInput.Load(int3(texelPos, 0)).a;
+
+            OctIrradianceOutput[texelPos] = float4(irradiance, texelAO);
         }
     }
 }

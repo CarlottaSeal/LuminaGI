@@ -99,7 +99,7 @@ cbuffer ShadowConstantsB5 : register(b5)
 Texture2D<float4> g_GBufferAlbedo   : register(t200);
 Texture2D<float4> g_GBufferNormal   : register(t201);
 Texture2D<float4> g_GBufferMaterial : register(t202);
-Texture2D<float4> g_GBufferMotion   : register(t203);
+Texture2D<float4> g_GBufferWorldPos : register(t203);
 Texture2D<float>  g_DepthBuffer     : register(t204);
 
 Texture2D<float> g_ShadowMap : register(t240);
@@ -177,18 +177,6 @@ float SamplePointShadowCS(int shadowSlot, float3 worldPos, float3 lightPos)
     return shadow / (float)NUM_SAMPLES;
 }
 
-float3 ReconstructWorldPosition(float2 uv, float depth)
-{
-    float4 clipPos = float4(uv * 2.0 - 1.0, depth, 1.0);
-    clipPos.y = -clipPos.y;
-    
-    float4 renderPos = mul(ClipToRenderTransform, clipPos);
-    float4 cameraPos = mul(RenderToCameraTransform, renderPos);
-    float4 worldPos = mul(CameraToWorldTransform, cameraPos);
-    
-    return worldPos.xyz / worldPos.w;
-}
-
 float3 DecodeNormal(float3 encoded)
 {
     return normalize(encoded * 2.0 - 1.0);
@@ -238,89 +226,31 @@ float ScreenSpaceContactShadow(float3 worldPos, float3 lightDir, float2 screenUV
 float SampleShadowMapPCF(float3 worldPos, float3 normal, float2 screenUV, float depth)
 {
     float4x4 lightViewProj = mul(LightRenderToClip, mul(LightCameraToRender, LightWorldToCamera));
+    float4 lightClipPos = mul(lightViewProj, float4(worldPos, 1.0));
+    lightClipPos.xyz /= lightClipPos.w;
+
+    float2 shadowUV = lightClipPos.xy * 0.5 + 0.5;
+    shadowUV.y = 1.0 - shadowUV.y;
+
+    if (shadowUV.x < 0 || shadowUV.x > 1 || shadowUV.y < 0 || shadowUV.y > 1)
+        return 1.0;
+
     float NdotL = saturate(dot(normal, -SunNormal));
-    float3 lightDir = -SunNormal;
+    float bias = max(0.005 * (1.0 - NdotL), 0.001);
+    float currentDepth = lightClipPos.z - bias;
 
-    // === 背面直接返回无阴影 ===
-    if (NdotL < 0.01f)
+    // 3x3 PCF
+    float shadow = 0.0;
+    float texelSize = 1.0 / ShadowMapSize;
+    for (int x = -1; x <= 1; x++)
     {
-        return 1.0f;
-    }
-
-    // === 标准 Shadow Map + PCF ===
-    float normalOffsetScale = 0.005f * (1.0f - NdotL);
-    float3 offsetWorldPos = worldPos + normal * normalOffsetScale;
-
-    float4 lightSpacePos = mul(lightViewProj, float4(offsetWorldPos, 1.0f));
-    lightSpacePos.xyz /= lightSpacePos.w;
-    float2 shadowUV = lightSpacePos.xy * 0.5f + 0.5f;
-    shadowUV.y = 1.0f - shadowUV.y;
-
-    float shadowMapResult = 1.0f;
-    if (all(shadowUV >= 0.0f) && all(shadowUV <= 1.0f))
-    {
-        float texelSize = 1.0f / ShadowMapSize;
-
-        // Slope-scaled bias
-        float slopeScale = sqrt(1.0f - NdotL * NdotL) / NdotL;
-        slopeScale = min(slopeScale, 5.0f);
-        float bias = 0.002f + 0.003f * slopeScale;
-        float receiverDepth = lightSpacePos.z - bias;
-
-        float shadow = 0.0f;
-
-        // 5x5 PCF
-        [unroll]
-        for (int x = -2; x <= 2; ++x)
+        for (int y = -1; y <= 1; y++)
         {
-            [unroll]
-            for (int y = -2; y <= 2; ++y)
-            {
-                float2 offset = float2(x, y) * texelSize;
-                shadow += g_ShadowMap.SampleCmpLevelZero(ShadowSampler, shadowUV + offset, receiverDepth);
-            }
+            shadow += g_ShadowMap.SampleCmpLevelZero(ShadowSampler,
+                shadowUV + float2(x, y) * texelSize, currentDepth);
         }
-        shadowMapResult = shadow / 25.0f;
     }
-
-    // 边缘平滑已移除 - 会在 NdotL 0.02~0.2 区域造成漫反射光泄漏（线状高光）
-
-    // float contactShadow = ScreenSpaceContactShadow(worldPos, lightDir, screenUV, depth);
-    float finalShadow = shadowMapResult;
-
-    // === SDF 阴影 ===
-#if ENABLE_SDF_SHADOW
-    float sdfShadowResult = 1.0f;
-    if (UseSDFShadow > 0.5f && SDFExtent > 0.0f)
-    {
-        float3 sunDir = -SunNormal;
-        float softness = SDFShadowSoftness > 0.0f ? SDFShadowSoftness : 12.0f;
-
-        // 沿法线和光线方向偏移，避免 self-shadowing
-        float3 sdfRayOrigin = worldPos + normal * 0.5f + sunDir * 0.5f;
-
-        sdfShadowResult = TraceSDFSoftShadowImproved(
-            g_GlobalSDF,
-            LinearSampler,
-            SDFCenter,
-            SDFExtent,
-            sdfRayOrigin,
-            sunDir,
-            SDF_SHADOW_MAX_DISTANCE,
-            softness
-        );
-    }
-
-    // 简化混合：SDF 只用于软化阴影边缘，不引入新的阴影
-    float combined = finalShadow * sdfShadowResult;
-
-    // 防止过暗
-    combined = max(combined, finalShadow * 0.3f);
-
-    return combined;
-#else
-    return finalShadow;
-#endif
+    return shadow / 9.0;
 }
 
 float RangeMap(float value, float inMin, float inMax, float outMin, float outMax)
@@ -336,27 +266,13 @@ float SmoothStep3(float t)
 float3 CalculateDirectLighting(float3 worldPos, float3 normal, float3 albedo, float shadow,
                                 float3 viewDir, float roughness, float metallic)
 {
-    float3 F0 = lerp(float3(0.04, 0.04, 0.04), albedo, metallic);
-    float smoothness = 1.0 - roughness;
-    float specPower = pow(2.0, smoothness * 12.0);  // Range: 1 to 4096
-    float normFactor = (specPower + 8.0) / 25.132;  // Normalization: (n+8)/(8*PI)
-
     float3 totalDiffuse = float3(0, 0, 0);
-    float3 totalSpecular = float3(0, 0, 0);
 
     float3 L_sun = -SunNormal;
     float NdotL_sun = saturate(dot(normal, L_sun));
     float3 sunRadiance = SunColor.rgb * SunColor.a * NdotL_sun * shadow;
 
     totalDiffuse += sunRadiance;
-
-    float3 H_sun = normalize(L_sun + viewDir);
-    float NdotH_sun = saturate(dot(normal, H_sun));
-    float VdotH_sun = saturate(dot(viewDir, H_sun));
-
-    float specIntensity_sun = pow(NdotH_sun, specPower) * normFactor;
-    float3 fresnel_sun = F0 + (1.0 - F0) * pow(1.0 - VdotH_sun, 5.0);
-    totalSpecular += fresnel_sun * specIntensity_sun * sunRadiance;
 
     float3 ambient = AmbientColor * AmbientIntensity;
     totalDiffuse += ambient;
@@ -395,7 +311,6 @@ float3 CalculateDirectLighting(float3 worldPos, float3 normal, float3 albedo, fl
             penumbra = SmoothStep3(penumbra);
         }
 
-        float NdotL = saturate(dot(pixelToLightDir, normal));
         float attenuation = penumbra * falloff * lightBrightness;
 
         float pointShadow = 1.0;
@@ -406,21 +321,10 @@ float3 CalculateDirectLighting(float3 worldPos, float3 normal, float3 albedo, fl
         float diffuseFactor = saturate(RangeMap(dot(pixelToLightDir, normal), -ambience, 1.0, 0.0, 1.0));
         float3 lightRadiance = attenuation * lightColor * pointShadow;
         totalDiffuse += lightRadiance * diffuseFactor;
-
-        if (NdotL > 0.001)
-        {
-            float3 H = normalize(pixelToLightDir + viewDir);
-            float NdotH = saturate(dot(normal, H));
-            float VdotH = saturate(dot(viewDir, H));
-
-            float specIntensity = pow(NdotH, specPower) * normFactor * NdotL;
-            float3 fresnel = F0 + (1.0 - F0) * pow(1.0 - VdotH, 5.0);
-            totalSpecular += fresnel * specIntensity * lightRadiance;
-        }
     }
 
     float3 diffuseColor = albedo * (1.0 - metallic);
-    return diffuseColor * totalDiffuse + totalSpecular;
+    return diffuseColor * totalDiffuse;
 }
 
 float3 GetSkyColor(float3 viewDir)
@@ -443,14 +347,12 @@ float4 CompositePS(VSOutput input) : SV_TARGET
 
     if (depth >= 0.9999)
     {
-        float3 worldPos = ReconstructWorldPosition(uv, 0.5);
-        float3 viewDir = normalize(worldPos - CameraWorldPosition);
-        float3 skyColor = GetSkyColor(viewDir);
+        float3 skyColor = GetSkyColor(float3(0, 0, -1));
         skyColor = pow(saturate(skyColor), 1.0 / 2.2);
         return float4(skyColor, 1.0);
     }
 
-    float3 worldPos = ReconstructWorldPosition(uv, depth);
+    float3 worldPos = g_GBufferWorldPos[pixelCoord].rgb;
 
     float3 albedo = g_GBufferAlbedo[pixelCoord].rgb;
     float3 worldNormal = DecodeNormal(g_GBufferNormal[pixelCoord].rgb);
@@ -469,6 +371,7 @@ float4 CompositePS(VSOutput input) : SV_TARGET
     float3 indirectLighting = g_ScreenIndirectLighting[pixelCoord].rgb;
 
     float3 finalColor = directLighting + indirectLighting;
+
     finalColor = ToneMapACES(finalColor);
     finalColor = pow(saturate(finalColor), 1.0 / 2.2);
 

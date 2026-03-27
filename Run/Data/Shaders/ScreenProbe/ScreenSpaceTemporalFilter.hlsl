@@ -152,12 +152,14 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
     if (pixel.x >= ScreenWidth || pixel.y >= ScreenHeight)
         return;
 
-    float3 currentRaw = CurrentIndirect[pixel].rgb;
+    float4 currentRaw4 = CurrentIndirect[pixel];
+    float3 currentRaw = currentRaw4.rgb;
+    float currentAO = currentRaw4.a;
     float depth = DepthBuffer[pixel];
 
     if (depth >= 0.9999f || depth <= 0.0f)
     {
-        FilteredOutput[pixel] = float4(currentRaw, 1.0f);
+        FilteredOutput[pixel] = float4(currentRaw, currentAO);
         return;
     }
 
@@ -213,5 +215,5 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
     if (resultLum > MAX_RADIANCE_LUM)
         result *= MAX_RADIANCE_LUM / resultLum;
 
-    FilteredOutput[pixel] = float4(result, 1.0f);
+    FilteredOutput[pixel] = float4(result, currentAO);
 }
