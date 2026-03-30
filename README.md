@@ -106,7 +106,6 @@ Measured at 1920x1080 on a desktop NVIDIA GPU:
 
 - [Lumen (Unreal Engine 5)](https://advances.realtimerendering.com/s2022/SIGGRAPH2022-Advances-Lumen-Wright%20et%20al.pdf) -- Wright, Narkowicz, Jimenez (SIGGRAPH 2022)
 - [GI-1.0](https://gpuopen.com/download/publications/GPUOpen2022_GI1_0.pdf) -- Boisse (AMD GPUOpen, 2022)
-- [SimLumen](https://github.com/jiawei-gao/SimLumen) -- Educational Lumen reference implementation
 
 ## License
 
