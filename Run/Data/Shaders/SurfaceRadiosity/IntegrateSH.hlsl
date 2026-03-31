@@ -1,175 +1,186 @@
 //=============================================================================
 // IntegrateSH.hlsl
-// Surface Radiosity Pass 5.4: Integrate SH to Surface Cache
-//
-// 在 Surface Cache Atlas 全分辨率运行，从周围 Probe 插值 SH
-// 重建 Indirect Lighting 并写入 Surface Cache
+// SimLumen 风格: 双线性插值 + CalcDiffuseTransferSH + DotSH
 //=============================================================================
 
 #include "RadiosityCacheCommon.hlsli"
-#include "RadiosityCacheSH.hlsli"
 
-// Root Parameter [1]: Surface Cache SRVs (t0-t5)
 Texture2DArray<float4> SurfaceCacheAtlas : register(t0);
 StructuredBuffer<SurfaceCardMetadata> CardMetadataBuffer : register(t1);
 
-// Root Parameter [3]: Radiosity SRVs (t20-t25)
 Texture2D<float4> RadiositySH_R_In : register(t23);
 Texture2D<float4> RadiositySH_G_In : register(t24);
 Texture2D<float4> RadiositySH_B_In : register(t25);
 
-// Root Parameter [4]: Radiosity UAVs (u0-u5)
-// 直接写入 Surface Cache 的 Indirect Light 层
 RWTexture2DArray<float4> SurfaceCacheAtlasOutput : register(u0);
 
-// Samplers
-SamplerState PointSampler  : register(s0);
-SamplerState LinearSampler : register(s1);
-
-//=============================================================================
-// 常量
-//=============================================================================
-
+#define LAYER_NORMAL 1
 #define LAYER_INDIRECT_LIGHT 4
 
 //=============================================================================
-// 辅助函数
+// SimLumen SH 结构
 //=============================================================================
-
-// 加载单个 Probe 的 SH
-SH2RGB LoadProbeSH(uint2 probeCoord)
+struct FTwoBandSHVector
 {
-    if (probeCoord.x >= ProbeGridWidth || probeCoord.y >= ProbeGridHeight)
-    {
-        return InitSH();
-    }
-    
-    SH2RGB sh;
-    sh.R = RadiositySH_R_In[probeCoord];
-    sh.G = RadiositySH_G_In[probeCoord];
-    sh.B = RadiositySH_B_In[probeCoord];
+    float4 V;  // [L0, L1y, L1z, L1x]
+};
+
+struct FTwoBandSHVectorRGB
+{
+    FTwoBandSHVector R;
+    FTwoBandSHVector G;
+    FTwoBandSHVector B;
+};
+
+FTwoBandSHVectorRGB GetRadiosityProbeSH(uint2 probeCoord)
+{
+    uint probeGridWidth = AtlasWidth / PROBE_TEXELS_SIZE;
+    uint probeGridHeight = AtlasHeight / PROBE_TEXELS_SIZE;
+
+    FTwoBandSHVectorRGB sh;
+    sh.R.V = float4(0, 0, 0, 0);
+    sh.G.V = float4(0, 0, 0, 0);
+    sh.B.V = float4(0, 0, 0, 0);
+
+    if (probeCoord.x >= probeGridWidth || probeCoord.y >= probeGridHeight)
+        return sh;
+
+    sh.R.V = RadiositySH_R_In.Load(int3(probeCoord, 0));
+    sh.G.V = RadiositySH_G_In.Load(int3(probeCoord, 0));
+    sh.B.V = RadiositySH_B_In.Load(int3(probeCoord, 0));
+
     return sh;
 }
 
-// 采样 Atlas 像素的属性
-float SampleAtlasDepth(uint2 atlasCoord)
+FTwoBandSHVectorRGB MulSH_Scalar(FTwoBandSHVectorRGB SH, float Scalar)
 {
-    // 假设深度存在某个位置，这里简化处理
-    // 实际项目中可能从专门的深度纹理读取
-    return 1.0f;  // 简化：假设所有像素都有效
+    FTwoBandSHVectorRGB Result;
+    Result.R.V = SH.R.V * Scalar;
+    Result.G.V = SH.G.V * Scalar;
+    Result.B.V = SH.B.V * Scalar;
+    return Result;
 }
 
-float3 SampleAtlasNormal(uint2 atlasCoord)
+FTwoBandSHVectorRGB AddSH(FTwoBandSHVectorRGB A, FTwoBandSHVectorRGB B)
 {
-    float4 normalData = SurfaceCacheAtlas.Load(int4(atlasCoord, 1, 0));  // Layer 1 = Normal
-    float3 normal = normalData.xyz * 2.0f - 1.0f;
-    return SafeNormalize(normal);
+    FTwoBandSHVectorRGB Result;
+    Result.R.V = A.R.V + B.R.V;
+    Result.G.V = A.G.V + B.G.V;
+    Result.B.V = A.B.V + B.B.V;
+    return Result;
 }
 
-float3 SampleAtlasAlbedo(uint2 atlasCoord)
+//=============================================================================
+// SimLumen: CalcDiffuseTransferSH
+//=============================================================================
+FTwoBandSHVector SHBasisFunction(float3 InputVector)
 {
-    return SurfaceCacheAtlas.Load(int4(atlasCoord, 0, 0)).rgb;  // Layer 0 = Albedo
+    FTwoBandSHVector Result;
+    Result.V.x = 0.282095f;
+    Result.V.y = -0.488603f * InputVector.y;
+    Result.V.z = 0.488603f * InputVector.z;
+    Result.V.w = -0.488603f * InputVector.x;
+    return Result;
 }
 
-// 采样 Probe 中心的属性（用于权重计算）
-float SampleProbeDepth(uint2 probeCoord)
+FTwoBandSHVector CalcDiffuseTransferSH(float3 Normal, float Exponent)
 {
-    uint probeSpacingInt = (uint)ProbeSpacing;
-    uint2 atlasCoord = probeCoord * probeSpacingInt + probeSpacingInt / 2;
-    return SampleAtlasDepth(atlasCoord);
+    FTwoBandSHVector Result = SHBasisFunction(Normal);
+
+    float L0 = 2.0f * PI / (1.0f + 1.0f * Exponent);
+    float L1 = 2.0f * PI / (2.0f + 1.0f * Exponent);
+
+    Result.V.x *= L0;
+    Result.V.yzw *= L1;
+
+    return Result;
 }
 
-float3 SampleProbeNormal(uint2 probeCoord)
+float DotSH(FTwoBandSHVector A, FTwoBandSHVector B)
 {
-    uint probeSpacingInt = (uint)ProbeSpacing;
-    uint2 atlasCoord = probeCoord * probeSpacingInt + probeSpacingInt / 2;
-    return SampleAtlasNormal(atlasCoord);
+    return dot(A.V, B.V);
 }
 
-
-[numthreads(8, 8, 1)]
-void main(uint3 DispatchThreadID : SV_DispatchThreadID)
+float3 DotSH_RGB(FTwoBandSHVectorRGB A, FTwoBandSHVector B)
 {
-    uint2 atlasCoord = DispatchThreadID.xy;
-    
-    if (atlasCoord.x >= AtlasWidth || atlasCoord.y >= AtlasHeight)
+    float3 Result;
+    Result.r = DotSH(A.R, B);
+    Result.g = DotSH(A.G, B);
+    Result.b = DotSH(A.B, B);
+    return Result;
+}
+
+//=============================================================================
+// Main: SimLumen 风格
+//=============================================================================
+[numthreads(16, 16, 1)]
+void main(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+    uint2 pixelCoord = dispatchThreadID.xy;
+
+    if (pixelCoord.x >= AtlasWidth || pixelCoord.y >= AtlasHeight)
         return;
-    
-    // 读取当前像素属性
-    float3 pixelNormal = SampleAtlasNormal(atlasCoord);
-    float3 pixelAlbedo = SampleAtlasAlbedo(atlasCoord);
-    
-    // 检查是否是有效像素（通过检查 albedo 或其他方式）
-    float albedoLum = Luminance(pixelAlbedo);
-    if (albedoLum < 0.001f)
+
+    // 读取像素法线
+    float4 normalData = SurfaceCacheAtlas.Load(int4(pixelCoord, LAYER_NORMAL, 0));
+    float3 pixelNormal = normalData.xyz * 2.0f - 1.0f;
+    pixelNormal = SafeNormalize(pixelNormal);
+
+    // 检查是否有效
+    if (length(pixelNormal) < 0.5f)
     {
-        SurfaceCacheAtlasOutput[uint3(atlasCoord, LAYER_INDIRECT_LIGHT)] = float4(0, 0, 0, 0);
+        SurfaceCacheAtlasOutput[uint3(pixelCoord, LAYER_INDIRECT_LIGHT)] = float4(0, 0, 0, 0);
         return;
     }
-    
-    // 计算像素在 Probe Grid 中的位置 (浮点数)
-    float2 probeUV = float2(atlasCoord) / ProbeSpacing;
-    
-    // 双线性插值的 4 个 Probe
-    int2 probeCoord00 = int2(floor(probeUV - 0.5f));
-    int2 probeCoord10 = probeCoord00 + int2(1, 0);
-    int2 probeCoord01 = probeCoord00 + int2(0, 1);
-    int2 probeCoord11 = probeCoord00 + int2(1, 1);
-    
-    // 双线性权重
-    float2 bilinearWeights = frac(probeUV - 0.5f);
-    float w00 = (1.0f - bilinearWeights.x) * (1.0f - bilinearWeights.y);
-    float w10 = bilinearWeights.x * (1.0f - bilinearWeights.y);
-    float w01 = (1.0f - bilinearWeights.x) * bilinearWeights.y;
-    float w11 = bilinearWeights.x * bilinearWeights.y;
-    
-    // 累积 Radiance
-    float3 totalRadiance = float3(0, 0, 0);
-    float totalWeight = 0.0f;
-    
-    // 采样 4 个 Probe
-    int2 probeCoords[4] = { probeCoord00, probeCoord10, probeCoord01, probeCoord11 };
-    float bilinearW[4] = { w00, w10, w01, w11 };
-    
-    [unroll]
-    for (int i = 0; i < 4; i++)
+
+    // 计算这个像素在 probe grid 中的位置
+    uint2 tileIndex = pixelCoord / PROBE_TEXELS_SIZE;
+    uint2 subTilePos = pixelCoord % PROBE_TEXELS_SIZE;
+
+    // SimLumen: 双线性权重
+    float2 bilinearWeight = float2(subTilePos) / float(PROBE_TEXELS_SIZE);
+    float4 weights = float4(
+        (1.0f - bilinearWeight.x) * (1.0f - bilinearWeight.y),  // 00
+        (1.0f - bilinearWeight.x) * bilinearWeight.y,           // 01
+        bilinearWeight.x * (1.0f - bilinearWeight.y),           // 10
+        bilinearWeight.x * bilinearWeight.y                     // 11
+    );
+
+    // SimLumen: 4 个相邻 probe 坐标
+    uint2 probeCoord00 = tileIndex;
+    uint2 probeCoord01 = probeCoord00 + uint2(0, 1);
+    uint2 probeCoord10 = probeCoord00 + uint2(1, 0);
+    uint2 probeCoord11 = probeCoord00 + uint2(1, 1);
+
+    // 加载并插值 SH
+    FTwoBandSHVectorRGB irradianceSH;
+    irradianceSH.R.V = float4(0, 0, 0, 0);
+    irradianceSH.G.V = float4(0, 0, 0, 0);
+    irradianceSH.B.V = float4(0, 0, 0, 0);
+
+    FTwoBandSHVectorRGB sh00 = GetRadiosityProbeSH(probeCoord00);
+    FTwoBandSHVectorRGB sh01 = GetRadiosityProbeSH(probeCoord01);
+    FTwoBandSHVectorRGB sh10 = GetRadiosityProbeSH(probeCoord10);
+    FTwoBandSHVectorRGB sh11 = GetRadiosityProbeSH(probeCoord11);
+
+    irradianceSH = AddSH(irradianceSH, MulSH_Scalar(sh00, weights.x));
+    irradianceSH = AddSH(irradianceSH, MulSH_Scalar(sh01, weights.y));
+    irradianceSH = AddSH(irradianceSH, MulSH_Scalar(sh10, weights.z));
+    irradianceSH = AddSH(irradianceSH, MulSH_Scalar(sh11, weights.w));
+
+    // SimLumen: CalcDiffuseTransferSH + DotSH
+    FTwoBandSHVector diffuseTransferSH = CalcDiffuseTransferSH(pixelNormal, 1.0f);
+    float3 texelIrradiance = max(float3(0, 0, 0), DotSH_RGB(irradianceSH, diffuseTransferSH));
+
+    // SimLumen: 归一化权重
+    float totalWeight = weights.x + weights.y + weights.z + weights.w;
+    if (totalWeight > 0.001f)
     {
-        int2 pc = probeCoords[i];
-        
-        // 边界检查
-        if (pc.x < 0 || pc.x >= (int)ProbeGridWidth || 
-            pc.y < 0 || pc.y >= (int)ProbeGridHeight)
-            continue;
-        
-        // 加载 Probe SH
-        SH2RGB probeSH = LoadProbeSH(uint2(pc));
-        
-        // 计算法线权重
-        float3 probeNormal = SampleProbeNormal(uint2(pc));
-        float normalDot = saturate(dot(pixelNormal, probeNormal));
-        float normalWeight = pow(normalDot, NormalWeightScale);
-        
-        // 最终权重
-        float weight = bilinearW[i] * normalWeight;
-        
-        if (weight > 0.001f)
-        {
-            // 从 SH 评估法线方向的 Radiance
-            float3 radiance = EvaluateSHRGB(probeSH, pixelNormal);
-            
-            totalRadiance += radiance * weight;
-            totalWeight += weight;
-        }
+        texelIrradiance = texelIrradiance / totalWeight;
     }
-    
-    float3 finalRadiance = float3(0, 0, 0);
-    if (totalWeight > 0.0f)
-    {
-        finalRadiance = totalRadiance / totalWeight;
-    }
-    
-    // 应用强度
-    float3 indirectLight = finalRadiance * IndirectIntensity;
-    
-    SurfaceCacheAtlasOutput[uint3(atlasCoord, LAYER_INDIRECT_LIGHT)] = float4(indirectLight, 1.0); 
+
+    // 注意：IndirectIntensity 只在 FinalGather 中应用一次，这里不乘
+    // SimLumen 没有 clamp，直接输出
+
+    SurfaceCacheAtlasOutput[uint3(pixelCoord, LAYER_INDIRECT_LIGHT)] = float4(texelIrradiance, 0.0f);
 }

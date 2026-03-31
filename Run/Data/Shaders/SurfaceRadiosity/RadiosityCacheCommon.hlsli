@@ -1,7 +1,6 @@
 //=============================================================================
 // RadiosityCacheCommon.hlsli
-// Surface Radiosity Cache 所有 Shader 的公共定义
-// 统一使用 SurfaceRadiosityConstants
+// Surface Radiosity Cache common definitions
 //=============================================================================
 
 #ifndef RADIOSITY_CACHE_COMMON_HLSLI
@@ -17,59 +16,48 @@
 #define INV_PI      0.31830988618f
 #define INV_TWO_PI  0.15915494309f
 
-//=============================================================================
-// 统一常量缓冲区 - 与 C++ SurfaceRadiosityConstants 完全匹配
-//=============================================================================
+// SimLumen 常量
+#define PROBE_TEXELS_SIZE       4       // 每个 probe 是 4x4 像素
+#define MAX_FRAME_ACCUMULATED   4       // Hammersley 4 帧循环
 
 cbuffer SurfaceRadiosityConstants : register(b0)
 {
-    // Surface Cache Atlas 信息
-    uint    AtlasWidth;                 // 4096
-    uint    AtlasHeight;                // 4096
-    uint    ProbeGridWidth;             // 1024 (4096 / 4)
-    uint    ProbeGridHeight;            // 1024
-    
-    // Radiosity 追踪配置
-    uint    RaysPerProbe;               // 16
-    float   ProbeSpacing;               // 4.0
-    float   TraceMaxDistance;           // 200.0
-    uint    TraceMaxSteps;              // 64
-    
-    // 追踪参数
-    float   TraceHitThreshold;          // 0.02
-    float   RayBias;                    // 0.5
-    float   TemporalBlendFactor;        // 0.05
-    float   SkyIntensity;               // 0.3
-    
-    // Global SDF 信息
+    uint    AtlasWidth;
+    uint    AtlasHeight;
+    uint    ProbeGridWidth;
+    uint    ProbeGridHeight;
+
+    uint    RaysPerProbe;
+    float   ProbeSpacing;
+    float   TraceMaxDistance;
+    uint    TraceMaxSteps;
+
+    float   TraceHitThreshold;
+    float   RayBias;
+    float   TemporalBlendFactor;
+    float   SkyIntensity;
+
     float3  GlobalSDFCenter;
     float   GlobalSDFExtent;
 
     float3  GlobalSDFInvExtent;
     uint    GlobalSDFResolution;
 
-    // Voxel Lighting 场景边界 (与 InjectVoxelLighting 一致)
     float3  SceneBoundsMin;
     float   VoxelLightingPadding0;
     float3  SceneBoundsMax;
     float   VoxelLightingPadding1;
-    
-    // 滤波参数
-    float   DepthWeightScale;           // 10.0
-    float   NormalWeightScale;          // 4.0
-    uint    FilterRadius;               // 1
-    float   IndirectIntensity;          // 1.0
-    
-    // 其他
+
+    float   DepthWeightScale;
+    float   NormalWeightScale;
+    uint    FilterRadius;
+    float   IndirectIntensity;
+
     uint    FrameIndex;
     uint    ActiveCardCount;
     uint    Padding0;
     uint    Padding1;
 };
-
-//=============================================================================
-// GPU 结构体
-//=============================================================================
 
 struct SurfaceCardMetadata
 {
@@ -97,26 +85,16 @@ struct SurfaceCardMetadata
     uint4   LightMask;
 };
 
-//=============================================================================
-// 工具函数
-//=============================================================================
-
-// 安全归一化
 float3 SafeNormalize(float3 v)
 {
     float len = length(v);
     return len > 0.0001f ? v / len : float3(0, 1, 0);
 }
 
-// RGB 到亮度
 float Luminance(float3 color)
 {
     return dot(color, float3(0.2126f, 0.7152f, 0.0722f));
 }
-
-//=============================================================================
-// 随机数生成
-//=============================================================================
 
 uint PCGHash(uint input)
 {
@@ -135,29 +113,23 @@ float2 Random2D(uint seed)
     return float2(Random(seed), Random(seed + 1u));
 }
 
-//=============================================================================
-// 半球采样
-//=============================================================================
-
-// Fibonacci 半球采样
 float3 FibonacciHemisphere(uint index, uint count, float3 normal)
 {
     float phi = TWO_PI * frac(float(index) * 0.6180339887f);
     float cosTheta = 1.0f - (2.0f * index + 1.0f) / (2.0f * count);
     cosTheta = max(0.0f, cosTheta);
     float sinTheta = sqrt(1.0f - cosTheta * cosTheta);
-    
+
     float3 localDir = float3(sinTheta * cos(phi), sinTheta * sin(phi), cosTheta);
-    
-    // 变换到 Normal 空间
+
+    // Transform to normal space
     float3 up = abs(normal.y) < 0.999f ? float3(0, 1, 0) : float3(1, 0, 0);
     float3 tangent = normalize(cross(up, normal));
     float3 bitangent = cross(normal, tangent);
-    
+
     return normalize(tangent * localDir.x + bitangent * localDir.y + normal * localDir.z);
 }
 
-// Cosine 加权半球采样
 float3 CosineSampleHemisphere(float2 random, float3 normal)
 {
     float phi = TWO_PI * random.x;
@@ -173,10 +145,6 @@ float3 CosineSampleHemisphere(float2 random, float3 normal)
     return normalize(tangent * localDir.x + bitangent * localDir.y + normal * localDir.z);
 }
 
-//=============================================================================
-// 天空采样
-//=============================================================================
-
 float3 SampleSkyLight(float3 direction, float intensity)
 {
     float skyGradient = saturate(direction.y * 0.5f + 0.5f);
@@ -184,10 +152,6 @@ float3 SampleSkyLight(float3 direction, float intensity)
     float3 zenithColor = float3(0.5f, 0.7f, 1.0f);
     return lerp(horizonColor, zenithColor, skyGradient) * intensity;
 }
-
-//=============================================================================
-// 权重计算
-//=============================================================================
 
 float ComputeDepthWeight(float pixelDepth, float probeDepth, float scale)
 {

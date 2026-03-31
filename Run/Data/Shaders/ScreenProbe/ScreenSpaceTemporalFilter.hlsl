@@ -1,194 +1,219 @@
 //=============================================================================
-// ScreenSpaceTemporalFilter.hlsl
-// 屏幕空间时间重投影滤波
-//
-// 功能：
-// 1. 使用世界坐标重投影到上一帧屏幕位置
-// 2. 采样历史缓冲
-// 3. 颜色邻域钳制 (防止 ghosting)
-// 4. 深度验证 (检测遮挡变化)
-// 5. 自适应混合
+// ScreenSpaceTemporalFilter.hlsl - Screen-space temporal denoising
 //=============================================================================
 
 #include "ScreenProbeCommon.hlsli"
 #include "ScreenProbeRegisters.hlsli"
 
-//=============================================================================
-// 资源绑定
-//=============================================================================
+Texture2D<float4> CurrentIndirect : register(REG_INDIRECT_RAW_SRV);
+Texture2D<float4> HistoryIndirect : register(REG_PREV_RADIANCE_SRV);
+Texture2D<float4> GBufferWorldPos : register(REG_GBUFFER_WORLDPOS);
+Texture2D<float4> GBufferNormal   : register(REG_GBUFFER_NORMAL);
+Texture2D<float>  DepthBuffer     : register(REG_DEPTH_BUFFER);
+Texture2D<float>  PrevDepthBuffer : register(REG_PREV_DEPTH_SRV);
 
-// 当前帧间接光照 (FinalGather 的原始输出)
-Texture2D<float4> CurrentIndirect : register(REG_INDIRECT_RAW_SRV);  // t434 - m_screenIndirectRaw
+RWTexture2D<float4> FilteredOutput : register(REG_INDIRECT_LIGHT_UAV);
 
-// 历史缓冲 (上一帧的滤波结果)
-Texture2D<float4> HistoryIndirect : register(REG_PREV_RADIANCE_SRV);   // t419
-
-// GBuffer
-Texture2D<float4> GBufferWorldPos : register(REG_GBUFFER_WORLDPOS);    // t217
-Texture2D<float4> GBufferNormal   : register(REG_GBUFFER_NORMAL);      // t215
-Texture2D<float>  DepthBuffer     : register(REG_DEPTH_BUFFER);        // t218
-
-// 输出 (写回 ScreenIndirectLighting)
-RWTexture2D<float4> FilteredOutput : register(REG_INDIRECT_LIGHT_UAV);  // u414
-
-// 采样器
 SamplerState LinearSampler : register(s1);
 
-//=============================================================================
-// 常量
-//=============================================================================
+static const float BLEND_STATIC  = 0.02f;
+static const float BLEND_MOVING  = 0.15f;
+static const float VELOCITY_THRESHOLD = 4.0f;
+static const float DEPTH_TOLERANCE = 0.15f;
 
-static const float DEPTH_REJECT_THRESHOLD = 0.1f;   // 深度差异阈值
-static const float COLOR_BOX_SCALE = 1.25f;         // 颜色钳制范围缩放
-static const float BLEND_FACTOR_MIN = 0.02f;        // 最小混合因子 (更多历史)
-static const float BLEND_FACTOR_MAX = 0.25f;        // 最大混合因子 (更多当前帧)
-
-//=============================================================================
-// 辅助函数
-//=============================================================================
-
-// 世界坐标到上一帧屏幕 UV
-float3 WorldToPrevClipPos(float3 worldPos)
+float EstimateCameraRotation()
 {
-    float4 cameraPos = mul(PrevWorldToCamera, float4(worldPos, 1.0f));
-    float4 renderPos = mul(PrevCameraToRender, cameraPos);
-    float4 clipPos = mul(PrevRenderToClip, renderPos);
-    return clipPos.xyz / clipPos.w;
+    float3 currentForward = float3(WorldToCamera[0][2], WorldToCamera[1][2], WorldToCamera[2][2]);
+    float3 prevForward = float3(PrevWorldToCamera[0][2], PrevWorldToCamera[1][2], PrevWorldToCamera[2][2]);
+    float dotProduct = saturate(dot(normalize(currentForward), normalize(prevForward)));
+    return saturate((1.0f - dotProduct) * 20.0f);
 }
 
-float2 WorldToPrevScreenUV(float3 worldPos)
+float3 PreFilterSpeckles(uint2 pixel, float3 centerColor, float centerDepth, float3 centerNormal)
 {
-    float3 clipPos = WorldToPrevClipPos(worldPos);
-    float2 ndc = clipPos.xy;
+    float3 sum = float3(0, 0, 0);
+    float weightSum = 0.0f;
+    float3 minColor = float3(1e10, 1e10, 1e10);
+    float3 maxColor = float3(0, 0, 0);
+    float centerLum = Luminance(centerColor);
+
+    [unroll]
+    for (int dy = -2; dy <= 2; dy++)
+    {
+        [unroll]
+        for (int dx = -2; dx <= 2; dx++)
+        {
+            if (abs(dx) == 2 && abs(dy) == 2)
+                continue;
+
+            int2 p = clamp(int2(pixel) + int2(dx, dy), int2(0,0), int2(ScreenWidth-1, ScreenHeight-1));
+            float3 sampleColor = CurrentIndirect[p].rgb;
+            float sampleDepth = DepthBuffer[p];
+            float3 sampleNormal = GBufferNormal[p].xyz * 2.0f - 1.0f;
+
+            float depthDiff = abs(sampleDepth - centerDepth);
+            float normalDot = max(0.0f, dot(normalize(sampleNormal), normalize(centerNormal)));
+
+            if (depthDiff < 0.1f && normalDot > 0.8f)
+            {
+                float dist = length(float2(dx, dy));
+                float spatialWeight = exp(-dist * dist * 0.25f);
+
+                if (dx != 0 || dy != 0)
+                {
+                    minColor = min(minColor, sampleColor);
+                    maxColor = max(maxColor, sampleColor);
+                }
+
+                sum += sampleColor * spatialWeight;
+                weightSum += spatialWeight;
+            }
+        }
+    }
+
+    if (weightSum < 0.001f)
+        return centerColor;
+
+    float3 neighborMean = sum / weightSum;
+    float lumRatioMean = centerLum / max(Luminance(neighborMean), 0.001f);
+    float lumRatioMax = centerLum / max(Luminance(maxColor), 0.001f);
+
+    if (lumRatioMean > 1.5f || lumRatioMax > 1.2f)
+        return neighborMean;
+
+    return centerColor;
+}
+
+float2 Reproject(float3 worldPos, out float prevDepthExpected)
+{
+    float4 prevClip = mul(PrevRenderToClip, mul(PrevCameraToRender, mul(PrevWorldToCamera, float4(worldPos, 1.0f))));
+    prevDepthExpected = prevClip.z / prevClip.w;
+    float2 ndc = prevClip.xy / prevClip.w;
     ndc.y = -ndc.y;
     return ndc * 0.5f + 0.5f;
 }
 
-// 计算 3x3 邻域的颜色范围 (用于 clamp 防止 ghosting)
-void ComputeColorBounds(uint2 coord, out float3 minColor, out float3 maxColor, out float3 avgColor)
+float3 SoftClipToAABB(float3 color, float3 aabbMin, float3 aabbMax, float softness)
 {
-    minColor = float3(1e10, 1e10, 1e10);
-    maxColor = float3(-1e10, -1e10, -1e10);
-    avgColor = float3(0, 0, 0);
-    float count = 0;
+    float3 center = (aabbMin + aabbMax) * 0.5f;
+    float3 halfSize = (aabbMax - aabbMin) * 0.5f + 0.001f;
+
+    float3 offset = color - center;
+    float3 unit = abs(offset / halfSize);
+    float maxUnit = max(unit.x, max(unit.y, unit.z));
+
+    if (maxUnit > 1.0f)
+    {
+        float t = saturate((maxUnit - 1.0f) * softness);
+        float3 clipped = center + offset / maxUnit;
+        return lerp(color, clipped, t);
+    }
+    return color;
+}
+
+void ComputeNeighborhoodStats(uint2 pixel, out float3 mean, out float3 stddev, out float3 boxMin, out float3 boxMax)
+{
+    float3 m1 = float3(0, 0, 0);
+    float3 m2 = float3(0, 0, 0);
+    boxMin = float3(1e10, 1e10, 1e10);
+    boxMax = float3(-1e10, -1e10, -1e10);
+    float count = 0.0f;
 
     [unroll]
-    for (int y = -1; y <= 1; y++)
+    for (int dy = -2; dy <= 2; dy++)
     {
         [unroll]
-        for (int x = -1; x <= 1; x++)
+        for (int dx = -2; dx <= 2; dx++)
         {
-            int2 sampleCoord = int2(coord) + int2(x, y);
-            sampleCoord = clamp(sampleCoord, int2(0, 0), int2(ScreenWidth - 1, ScreenHeight - 1));
+            if (abs(dx) == 2 && abs(dy) == 2)
+                continue;
 
-            float3 color = CurrentIndirect[sampleCoord].rgb;
-            minColor = min(minColor, color);
-            maxColor = max(maxColor, color);
-            avgColor += color;
+            int2 p = clamp(int2(pixel) + int2(dx, dy), int2(0,0), int2(ScreenWidth-1, ScreenHeight-1));
+            float3 c = CurrentIndirect[p].rgb;
+
+            m1 += c;
+            m2 += c * c;
+            boxMin = min(boxMin, c);
+            boxMax = max(boxMax, c);
             count += 1.0f;
         }
     }
 
-    avgColor /= count;
-
-    // 扩展范围以允许一些变化
-    float3 colorCenter = (minColor + maxColor) * 0.5f;
-    float3 colorExtent = (maxColor - minColor) * 0.5f * COLOR_BOX_SCALE;
-    minColor = colorCenter - colorExtent;
-    maxColor = colorCenter + colorExtent;
+    mean = m1 / count;
+    float3 variance = max(m2 / count - mean * mean, float3(0,0,0));
+    stddev = sqrt(variance);
 }
-
-// RGB 到 YCoCg 颜色空间 (更好的 clamp)
-float3 RGBToYCoCg(float3 rgb)
-{
-    return float3(
-        0.25f * rgb.r + 0.5f * rgb.g + 0.25f * rgb.b,
-        0.5f * rgb.r - 0.5f * rgb.b,
-        -0.25f * rgb.r + 0.5f * rgb.g - 0.25f * rgb.b
-    );
-}
-
-float3 YCoCgToRGB(float3 ycocg)
-{
-    return float3(
-        ycocg.x + ycocg.y - ycocg.z,
-        ycocg.x + ycocg.z,
-        ycocg.x - ycocg.y - ycocg.z
-    );
-}
-
-//=============================================================================
-// 主计算着色器
-//=============================================================================
 
 [numthreads(8, 8, 1)]
 void main(uint3 dispatchThreadID : SV_DispatchThreadID)
 {
-    uint2 pixelCoord = dispatchThreadID.xy;
+    uint2 pixel = dispatchThreadID.xy;
 
-    if (pixelCoord.x >= ScreenWidth || pixelCoord.y >= ScreenHeight)
+    if (pixel.x >= ScreenWidth || pixel.y >= ScreenHeight)
         return;
 
-    float2 screenUV = (float2(pixelCoord) + 0.5f) / float2(ScreenWidth, ScreenHeight);
+    float4 currentRaw4 = CurrentIndirect[pixel];
+    float3 currentRaw = currentRaw4.rgb;
+    float currentAO = currentRaw4.a;
+    float depth = DepthBuffer[pixel];
 
-    // 读取当前帧数据
-    float3 currentColor = CurrentIndirect[pixelCoord].rgb;
-    float currentDepth = DepthBuffer[pixelCoord];
-    float3 worldPos = GBufferWorldPos[pixelCoord].rgb;
-    float3 worldNormal = GBufferNormal[pixelCoord].rgb * 2.0f - 1.0f;
-
-    // 天空像素直接输出当前帧
-    if (currentDepth >= 0.9999f)
+    if (depth >= 0.9999f || depth <= 0.0f)
     {
-        FilteredOutput[pixelCoord] = float4(currentColor, 1.0f);
+        FilteredOutput[pixel] = float4(currentRaw, currentAO);
         return;
     }
 
-    // 计算上一帧的屏幕 UV (重投影)
-    float2 historyUV = WorldToPrevScreenUV(worldPos);
+    float3 normal = GBufferNormal[pixel].xyz * 2.0f - 1.0f;
+    float3 current = PreFilterSpeckles(pixel, currentRaw, depth, normal);
+    float3 worldPos = GBufferWorldPos[pixel].rgb;
 
-    // 检查历史 UV 是否有效 (在屏幕内)
-    bool validHistory = all(historyUV >= 0.0f) && all(historyUV <= 1.0f);
+    float prevDepthExpected;
+    float2 historyUV = Reproject(worldPos, prevDepthExpected);
 
-    float blendFactor = BLEND_FACTOR_MAX;  // 默认偏向当前帧
-    float3 historyColor = currentColor;
+    float2 currentUV = (float2(pixel) + 0.5f) / float2(ScreenWidth, ScreenHeight);
+    float velocityPixels = length((historyUV - currentUV) * float2(ScreenWidth, ScreenHeight));
 
-    if (validHistory)
+    float3 mean, stddev, boxMin, boxMax;
+    ComputeNeighborhoodStats(pixel, mean, stddev, boxMin, boxMax);
+
+    float3 varMin = mean - 3.0f * stddev;
+    float3 varMax = mean + 3.0f * stddev;
+
+    float3 result = current;
+    bool historyValid = all(historyUV >= 0.0f) && all(historyUV <= 1.0f) && CurrentFrame >= 2;
+
+    if (historyValid)
     {
-        // 双线性采样历史
-        historyColor = HistoryIndirect.SampleLevel(LinearSampler, historyUV, 0).rgb;
+        float3 history = HistoryIndirect.SampleLevel(LinearSampler, historyUV, 0).rgb;
+        float prevDepth = PrevDepthBuffer.SampleLevel(LinearSampler, historyUV, 0);
 
-        // 计算邻域颜色范围
-        float3 minColor, maxColor, avgColor;
-        ComputeColorBounds(pixelCoord, minColor, maxColor, avgColor);
+        float depthError = abs(prevDepth - prevDepthExpected);
+        bool depthValid = depthError < DEPTH_TOLERANCE;
 
-        // 在 YCoCg 空间做 clamp (更好的效果)
-        float3 historyYCoCg = RGBToYCoCg(historyColor);
-        float3 minYCoCg = RGBToYCoCg(minColor);
-        float3 maxYCoCg = RGBToYCoCg(maxColor);
+        float rotationFactor = EstimateCameraRotation();
+        float motionFactor = saturate(velocityPixels / VELOCITY_THRESHOLD);
+        float blendFactor = lerp(BLEND_STATIC, BLEND_MOVING, max(motionFactor, rotationFactor));
 
-        // Clamp 历史颜色到当前帧邻域范围
-        historyYCoCg = clamp(historyYCoCg, minYCoCg, maxYCoCg);
-        historyColor = YCoCgToRGB(historyYCoCg);
-
-        // 计算历史与当前的差异，用于自适应混合
-        float colorDiff = length(historyColor - currentColor) / (length(currentColor) + 0.001f);
-
-        // 差异大时更多使用当前帧
-        blendFactor = lerp(BLEND_FACTOR_MIN, BLEND_FACTOR_MAX, saturate(colorDiff * 2.0f));
-
-        // 考虑首帧情况
-        if (CurrentFrame < 2)
+        if (depthValid)
         {
-            blendFactor = 1.0f;  // 首帧完全使用当前帧
+            float3 clippedHistory = SoftClipToAABB(history, varMin, varMax, 2.0f);
+            result = lerp(clippedHistory, current, blendFactor);
+        }
+        else
+        {
+            float3 clippedHistory = SoftClipToAABB(history, varMin, varMax, 4.0f);
+            result = lerp(clippedHistory, current, 0.7f);
         }
     }
 
-    // 混合当前帧和历史
-    float3 result = lerp(historyColor, currentColor, blendFactor);
-
-    // 确保非负
     result = max(result, float3(0, 0, 0));
+    if (any(isnan(result)) || any(isinf(result)))
+        result = current;
 
-    FilteredOutput[pixelCoord] = float4(result, 1.0f);
+    float resultLum = Luminance(result);
+    const float MAX_RADIANCE_LUM = 1.0f;
+    if (resultLum > MAX_RADIANCE_LUM)
+        result *= MAX_RADIANCE_LUM / resultLum;
+
+    FilteredOutput[pixel] = float4(result, currentAO);
 }

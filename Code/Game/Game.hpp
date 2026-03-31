@@ -11,6 +11,7 @@
 class Player;
 class Clock;
 class Entity;
+class LightObject;
 
 class Game 
 {
@@ -54,6 +55,12 @@ private:
 
 
 	float m_varyTime = 0.f;
+
+	// Orbiting point light
+	LightObject* m_orbitLight = nullptr;
+	float m_orbitAngle = 0.f;
+	Vec3 m_orbitCenter;
+	float m_orbitRadius = 2.5f;
 
 	std::vector<Vertex_PCU> m_gridVertexes;
 };

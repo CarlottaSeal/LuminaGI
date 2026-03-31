@@ -18,6 +18,7 @@
 
 #include "Engine/Renderer/GI/GISystem.h"
 #include "Engine/Scene/Scene.h"
+#include "Engine/Core/AutomatedTesting.hpp"
 
 App* g_theApp = nullptr;
 Renderer* g_theRenderer = nullptr;
@@ -124,6 +125,8 @@ void App::Startup()
 
 void App::Shutdown()
 {
+	AutomatedTestingShutdown();
+
 	delete g_theScene;
 	g_theScene = nullptr;
 
@@ -225,15 +228,14 @@ void App::HandleQuitRequested()
 
 void App::RunFrame()
 {
-	//float timeNow = static_cast<float>(GetCurrentTimeSeconds());
-	//float deltaSeconds = timeNow - m_timeLastFrameStart;
-	////DebuggerPrintf("TimeNow = %.06f\n, TimeNow");
-	//m_timeLastFrameStart = timeNow;
-
 	BeginFrame();
 	Update();
 	Render();
 	EndFrame();
+
+	AutomatedTestingEndFrame();
+	if (AutomatedTestingShouldQuit())
+		HandleQuitRequested();
 }
 
 void App::Update()
@@ -291,3 +293,4 @@ bool OnQuitEvent(EventArgs& args)
 	g_theApp->HandleQuitRequested();
 	return true;
 }
+

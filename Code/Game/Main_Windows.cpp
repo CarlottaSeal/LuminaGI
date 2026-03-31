@@ -6,6 +6,7 @@
 #include "Game/App.hpp"
 #include "Game/EngineBuildPreferences.hpp"
 #include "Game/Gamecommon.hpp"
+#include "Engine/Core/AutomatedTesting.hpp"
 
 #define UNUSED(x) (void)(x);
 
@@ -15,9 +16,9 @@ constexpr float CLIENT_ASPECT = 2.0f; // We are requesting a 2:1 aspect (square)
 
 int WINAPI WinMain(HINSTANCE applicationInstanceHandle, HINSTANCE, LPSTR commandLineString, int)
 {
-	UNUSED(commandLineString);
 	UNUSED(applicationInstanceHandle);
-	g_theApp = new App();// #SD1ToDo: g_theApp = new App();
+	g_theApp = new App();
+	AutomatedTestingStartup(commandLineString);
 	g_theApp->Startup();
 	
 	while (!g_theApp->IsQuitting())			// #SD1ToDo: ...becomes:  !g_theApp->IsQuitting()

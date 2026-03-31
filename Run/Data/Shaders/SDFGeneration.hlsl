@@ -24,9 +24,10 @@ cbuffer SDFGenConstants : register(b0)
     uint resolution;
     float3 boundsMax;
     uint numTriangles;
-    uint numVertices;     
-    uint numBVHNodes;     
-    float padding[2];   
+    uint numVertices;
+    uint numBVHNodes;
+    uint zSliceOffset;
+    float padding;
 };
 
 StructuredBuffer<Vertex> g_vertices : register(t0);
@@ -244,15 +245,21 @@ float TraverseBVH_BruteForce(float3 pos)
 
 [numthreads(8, 8, 8)]
 void main(uint3 dispatchThreadID : SV_DispatchThreadID)
-{   
+{
+    // Z-slice分片：实际voxel坐标 = dispatch坐标 + Z偏移
+    uint3 voxelCoord = uint3(dispatchThreadID.xy, dispatchThreadID.z + zSliceOffset);
+
+    if (voxelCoord.x >= resolution || voxelCoord.y >= resolution || voxelCoord.z >= resolution)
+        return;
+
     // 正常 SDF 计算
-    float3 uvw = (float3(dispatchThreadID) + 0.5) / float(resolution);
+    float3 uvw = (float3(voxelCoord) + 0.5) / float(resolution);
     float3 worldPos = lerp(boundsMin, boundsMax, uvw);
-    
+
     float distance = TraverseBVH_Optimized(worldPos);
-    
+
     // 如果需要调试，可以切换回暴力方法对比结果
     // float distance = TraverseBVH_BruteForce(worldPos);
-    
-    g_sdfOutput[dispatchThreadID] = distance;
+
+    g_sdfOutput[voxelCoord] = distance;
 }

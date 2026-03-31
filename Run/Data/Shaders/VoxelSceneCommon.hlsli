@@ -1,7 +1,7 @@
 #ifndef VOXEL_SCENE_COMMON_HLSLI
 #define VOXEL_SCENE_COMMON_HLSLI
 
-// SDF是在 [boundsMin, boundsMax] 范围内生成的
+// SDF is generated within [boundsMin, boundsMax]
 struct MeshSDFInfoGPU
 {
     float4x4 WorldToLocal;
@@ -18,8 +18,8 @@ struct MeshSDFInfoGPU
 
 struct SurfaceCardGPU
 {
-    uint AtlasX, AtlasY;           // Atlas像素坐标
-    uint ResolutionX, ResolutionY; // 分辨率
+    uint AtlasX, AtlasY;
+    uint ResolutionX, ResolutionY;
     float OriginX, OriginY, OriginZ; float Padding0;
     float AxisXx, AxisXy, AxisXz;    float Padding1;
     float AxisYx, AxisYy, AxisYz;    float Padding2;
@@ -37,23 +37,23 @@ struct VoxelVisibilityGPU
 
 cbuffer VoxelSceneConstants : register(b0)
 {
-    float3 SceneBoundsMin;       // offset 0
-    uint VoxelResolution;        // offset 12
-    
-    float3 SceneBoundsMax;       // offset 16
-    uint InstanceCount;          // offset 28 (或CardCount，取决于哪个Pass)
-    
-    float3 VoxelSize;            // offset 32 
-    float SDFThreshold;          // offset 44
-    
-    uint MaxTraceSteps;          // offset 48
-    float MaxTraceDistance;      // offset 52
-    uint CardCount;            // offset 60 (仅InjectVoxelLighting使用)
-    uint _padding;              // offset 56 (对齐到 64 bytes)
+    float3 SceneBoundsMin;
+    uint VoxelResolution;
 
-    float AtlasWidth;            // offset 64
-    float AtlasHeight;           // offset 68
-    float _padding2[2];  
+    float3 SceneBoundsMax;
+    uint InstanceCount;
+
+    float3 VoxelSize;
+    float SDFThreshold;
+
+    uint MaxTraceSteps;
+    float MaxTraceDistance;
+    uint CardCount;
+    uint _padding;
+
+    float AtlasWidth;
+    float AtlasHeight;
+    float _padding2[2];
 };
 
 static const float3 VoxelDirections[6] = 
@@ -125,73 +125,54 @@ float2 GetCardWorldSize(SurfaceCardGPU card)
     return float2(card.WorldSizeX, card.WorldSizeY);
 }
 
-// ============================================================
-// 世界坐标 → Card 局部坐标
-// 返回值：
-//   localPos.x: 沿 CardAxisX 的距离，范围 [-WorldSizeX/2, +WorldSizeX/2]
-//   localPos.y: 沿 CardAxisY 的距离，范围 [-WorldSizeY/2, +WorldSizeY/2]
-//   localPos.z: 沿 CardNormal 的距离（深度）
-// ============================================================
+// World position -> Card local position
 float3 WorldToCardLocal(float3 worldPos, SurfaceCardGPU card)
 {
     float3 origin = GetCardOrigin(card);
     float3 axisX = GetCardAxisX(card);
     float3 axisY = GetCardAxisY(card);
     float3 normal = GetCardNormal(card);
-    
-    // 计算相对于 Card 原点的偏移
+
     float3 offset = worldPos - origin;
-    
-    // 投影到 Card 的三个轴上
+
     float3 localPos;
     localPos.x = dot(offset, axisX);
     localPos.y = dot(offset, axisY);
     localPos.z = dot(offset, normal);
-    
+
     return localPos;
 }
 
-// Card 局部坐标 → Card UV [0, 1]
-// 匹配 CardCapture.hlsl：
-//   ndc.x = localPos.x / (CardSize.x * 0.5)  → [-1, 1]
-//   ndc.y = -localPos.y / (CardSize.y * 0.5) → [-1, 1]，Y翻转
-//   
-// localPos 范围是 [-CardSize/2, +CardSize/2]
+// Card local position -> Card UV [0, 1]
 float2 CardLocalToCardUV(float3 localPos, SurfaceCardGPU card)
 {
     float2 worldSize = GetCardWorldSize(card);
     float2 halfSize = worldSize * 0.5;
-    
-    // 局部坐标 → NDC [-1, 1]
+
     float2 ndc;
     ndc.x = localPos.x / halfSize.x;
-    ndc.y = -localPos.y / halfSize.y;  // Y 翻转！匹配 CardCapture
-    
-    // NDC → UV [0, 1]
+    ndc.y = -localPos.y / halfSize.y;  // Y flip to match CardCapture
+
     float2 cardUV = ndc * 0.5 + 0.5;
-    
+
     return cardUV;
 }
 
-// ============================================================
-// Card UV → Atlas UV
-// ============================================================
+// Card UV -> Atlas UV
 float2 CardUVToAtlasUV(float2 cardUV, SurfaceCardGPU card, float atlasWidth, float atlasHeight)
 {
-    // Card UV [0,1] → Atlas 像素坐标
     float2 atlasPixel;
     atlasPixel.x = card.AtlasX + cardUV.x * card.ResolutionX;
     atlasPixel.y = card.AtlasY + cardUV.y * card.ResolutionY;
-    
-    // 像素坐标 → 归一化 UV [0, 1]
+
     float2 atlasUV;
     atlasUV.x = atlasPixel.x / atlasWidth;
     atlasUV.y = atlasPixel.y / atlasHeight;
-    
+
     return atlasUV;
 }
 
-// 旧函数保留（已修正）- 直接从 localPos 到 atlasUV
+// Direct conversion from localPos to atlasUV
 float2 CardLocalToAtlasUV(float3 localPos, SurfaceCardGPU card, float atlasWidth, float atlasHeight)
 {
     // 1. localPos → cardUV
@@ -201,7 +182,7 @@ float2 CardLocalToAtlasUV(float3 localPos, SurfaceCardGPU card, float atlasWidth
     return CardUVToAtlasUV(cardUV, card, atlasWidth, atlasHeight);
 }
 
-// 检查 Card UV 是否有效
+// Check if Card UV is valid
 bool IsCardUVValid(float2 cardUV)
 {
     return cardUV.x >= 0.0 && cardUV.x <= 1.0 &&
@@ -213,15 +194,13 @@ bool IsPointInCardBounds(float3 localPos, SurfaceCardGPU card, float depthTolera
     float2 worldSize = GetCardWorldSize(card);
     float halfSizeX = worldSize.x * 0.5;
     float halfSizeY = worldSize.y * 0.5;
-    
-    // 检查 XY 平面上是否在 Card 范围内
+
     if (abs(localPos.x) > halfSizeX || abs(localPos.y) > halfSizeY)
         return false;
-    
-    // 检查深度（沿法线方向）
+
     if (depthTolerance > 0 && (localPos.z < 0 || localPos.z > depthTolerance))
         return false;
-    
+
     return true;
 }
 

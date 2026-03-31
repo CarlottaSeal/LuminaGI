@@ -268,4 +268,75 @@ float2 RotateVector(float2 v, float angle)
     return float2(v.x * c - v.y * s, v.x * s + v.y * c);
 }
 
+//-----------------------------------------------------------------------------
+// Point Light Cube Shadow Map Sampling
+//-----------------------------------------------------------------------------
+
+// Find which shadow slot a given general light ID occupies (-1 if none)
+int GetShadowSlotForLight(int lightIndex, int4 shadowLightIndices, int numShadowLights)
+{
+    [unroll]
+    for (int s = 0; s < 4; s++)
+    {
+        if (s >= numShadowLights) break;
+        if (shadowLightIndices[s] == lightIndex) return s;
+    }
+    return -1;
+}
+
+// Hard shadow sampling from point light cube shadow map
+float SamplePointLightShadowHard(
+    TextureCubeArray<float> cubeArray,
+    SamplerState pointSampler,
+    int shadowSlot,
+    float3 worldPos,
+    float3 lightPos,
+    float farPlane,
+    float bias)
+{
+    float3 lightToPixel = worldPos - lightPos;
+    float currentDist = length(lightToPixel);
+    float3 dir = lightToPixel / currentDist;
+    float currentDepth = currentDist / farPlane;
+
+    float storedDepth = cubeArray.SampleLevel(pointSampler, float4(dir, (float)shadowSlot), 0).r;
+    return (currentDepth - bias > storedDepth) ? 0.0 : 1.0;
+}
+
+// PCF shadow sampling from point light cube shadow map (20-sample Poisson disk)
+float SamplePointLightShadowPCF(
+    TextureCubeArray<float> cubeArray,
+    SamplerState pointSampler,
+    int shadowSlot,
+    float3 worldPos,
+    float3 lightPos,
+    float farPlane,
+    float bias,
+    float softness)
+{
+    float3 lightToPixel = worldPos - lightPos;
+    float currentDist = length(lightToPixel);
+    float3 dir = lightToPixel / currentDist;
+    float currentDepth = currentDist / farPlane;
+
+    // Build tangent frame perpendicular to sample direction
+    float3 tangent = normalize(cross(dir, float3(0.0, 1.0, 0.001)));
+    float3 bitangent = cross(dir, tangent);
+
+    float diskRadius = softness;
+
+    float shadow = 0.0;
+    // 20-sample Poisson disk (reusing first 16 + 4 from PoissonDisk32)
+    static const int NUM_SAMPLES = 16;
+    [unroll]
+    for (int i = 0; i < NUM_SAMPLES; i++)
+    {
+        float3 offset = (tangent * PoissonDisk16[i].x + bitangent * PoissonDisk16[i].y) * diskRadius;
+        float3 sampleDir = normalize(dir + offset);
+        float stored = cubeArray.SampleLevel(pointSampler, float4(sampleDir, (float)shadowSlot), 0).r;
+        shadow += (currentDepth - bias > stored) ? 0.0 : 1.0;
+    }
+    return shadow / (float)NUM_SAMPLES;
+}
+
 #endif // SHADOW_COMMON_HLSLI
