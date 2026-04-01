@@ -1,38 +1,23 @@
+cbuffer ModelConstants : register(b2)
+{
+    float4x4 ModelToWorldTransform;
+    float4 ModelColor;
+};
+
 cbuffer ShadowConstants : register(b5)
 {
-    float4x4 LightWorldToCamera;
+    float4x4 LightWorldToCamera;     
     float4x4 LightCameraToRender;
     float4x4 LightRenderToClip;
     float ShadowMapSize;
     float ShadowBias;
     float SoftnessFactor;
     float LightSize;
-    float3 LightPosition;
-    float FarPlane;
-    int4 ShadowLightIndices;
-    float4 ShadowFarPlanes;
-    float PointShadowBias;
-    float PointShadowSoftness;
-    int NumShadowCastingLights;
-    float PLShadowPadding;
 };
-
-cbuffer DrawConstants : register(b21)
-{
-    uint InstanceOffset;
-};
-
-struct InstanceData
-{
-    float4x4 ModelToWorld;
-    float4 Color;
-};
-StructuredBuffer<InstanceData> g_Instances : register(t243);
-
 struct VSInput
 {
     float3 position : POSITION;
-    uint InstanceID : SV_InstanceID;
+    // 其他属性不需要，Shadow Pass 只关心位置
 };
 
 struct VSOutput
@@ -43,13 +28,15 @@ struct VSOutput
 VSOutput VertexMain(VSInput input)
 {
     VSOutput output;
-
-    InstanceData inst = g_Instances[input.InstanceID + InstanceOffset];
-    float4 worldPos = mul(inst.ModelToWorld, float4(input.position, 1.0));
-
+    
+    float4 worldPos = mul(ModelToWorldTransform, float4(input.position, 1.0));
+    
     float4 cameraPos = mul(LightWorldToCamera, worldPos);
     float4 renderPos = mul(LightCameraToRender, cameraPos);
     output.clipPosition = mul(LightRenderToClip, renderPos);
-
+    
     return output;
 }
+
+// 无 Pixel Shader - 硬件自动写入深度到 Depth Buffer
+// PSO 中 PS = nullptr

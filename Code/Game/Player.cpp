@@ -44,6 +44,16 @@ void Player::Update(float deltaSeconds)
 	m_orientation.m_yawDegrees += controller.GetRightStickX() * m_angularVelocity.m_yawDegrees * 0.0025f;//deltaSeconds;
 	m_orientation.m_pitchDegrees += controller.GetRightStickY() * m_angularVelocity.m_pitchDegrees * 0.0025f;//deltaSeconds;
 
+	if (g_theApp->IsKeyDown('Q') || controller.IsButtonDown(XboxButtonID::LB))
+	{
+		m_orientation.m_rollDegrees -= m_angularVelocity.m_rollDegrees * deltaSeconds;
+	}
+
+	if (g_theApp->IsKeyDown('E') || controller.IsButtonDown(XboxButtonID::RB))
+	{
+		m_orientation.m_rollDegrees += m_angularVelocity.m_rollDegrees * deltaSeconds;
+	}
+
 	if (g_theApp->IsKeyDown('A'))
 	{
 		m_position += left* m_velocity.y * deltaSeconds;

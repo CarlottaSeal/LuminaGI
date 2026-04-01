@@ -1,79 +1,92 @@
 //=============================================================================
 // GenerateSampleDirections.hlsl
-// Generate sample directions with combined BRDF and Lighting PDF
-// 2D Dispatch: (ProbeGridWidth, ProbeGridHeight, 1) with [numthreads(8, 8, 1)]
+// Pass 6.4: Structured Importance Sampling
+// 结合 BRDF PDF 和 Lighting PDF 生成采样方向
 //=============================================================================
 
 #include "ScreenProbeCommon.hlsli"
 #include "ScreenProbeSH.hlsli"
 #include "ScreenProbeRegisters.hlsli"
 
-StructuredBuffer<ScreenProbeGPU> ProbeBuffer : register(REG_PROBE_BUFFER_SRV);
-StructuredBuffer<SH2CoeffsGPU>   BRDFPDF     : register(REG_BRDF_PDF_SRV);
-StructuredBuffer<SH2CoeffsGPU>   LightingPDF : register(REG_LIGHTING_PDF_SRV);
 
-RWStructuredBuffer<ImportanceSampleGPU> SampleDirections : register(REG_SAMPLE_DIR_UAV);
+StructuredBuffer<ScreenProbeGPU> ProbeBuffer : register(REG_PROBE_BUFFER_SRV); // t401
+StructuredBuffer<SH2CoeffsGPU>   BRDFPDF     : register(REG_BRDF_PDF_SRV);     // t403
+StructuredBuffer<SH2CoeffsGPU>   LightingPDF : register(REG_LIGHTING_PDF_SRV); // t405
 
-[numthreads(8, 8, 1)]
-void main(uint3 groupID : SV_GroupID, uint3 groupThreadID : SV_GroupThreadID)
+RWStructuredBuffer<ImportanceSampleGPU> SampleDirections : register(REG_SAMPLE_DIR_UAV); // u409
+
+[numthreads(64, 1, 1)]
+void main(uint3 dispatchThreadID : SV_DispatchThreadID)
 {
-    uint2 probeCoord = groupID.xy;
-    uint probeIndex = probeCoord.y * ProbeGridWidth + probeCoord.x;
-
-    uint rayIndex = groupThreadID.y * 8 + groupThreadID.x;
-    uint globalRayIndex = probeIndex * RaysPerProbe + rayIndex;
-
-    if (probeCoord.x >= ProbeGridWidth || probeCoord.y >= ProbeGridHeight)
+    uint globalIndex = dispatchThreadID.x;
+    
+    uint probeCount = ProbeGridWidth * ProbeGridHeight;
+    uint probeIndex = globalIndex / RaysPerProbe;
+    uint rayIndex = globalIndex % RaysPerProbe;
+    
+    if (probeIndex >= probeCount)
         return;
-
+    
     ScreenProbeGPU probe = ProbeBuffer[probeIndex];
-
+    
+    // 无效 Probe
     if (probe.Validity <= 0.0f)
     {
         ImportanceSampleGPU sample;
         sample.Direction = float3(0, 1, 0);
         sample.PDF = 0.0f;
-        SampleDirections[globalRayIndex] = sample;
+        SampleDirections[globalIndex] = sample;
         return;
     }
-
-    uint localX = rayIndex % OctahedronWidth;
-    uint localY = rayIndex / OctahedronWidth;
-    float2 octUV = float2((localX + 0.5f) / float(OctahedronWidth), (localY + 0.5f) / float(OctahedronHeight));
-    float3 sampleDir = OctahedronUVToDirection(octUV);
-
-    float4 shBasis = EvaluateSHBasis(sampleDir);
-
-    SH2CoeffsGPU brdfSH = BRDFPDF[probeIndex];
-    float3 brdfEval = float3(
-        max(0.0f, dot(brdfSH.R, shBasis)),
-        max(0.0f, dot(brdfSH.G, shBasis)),
-        max(0.0f, dot(brdfSH.B, shBasis))
-    );
-    float brdfPdf = max(0.01f, Luminance(brdfEval));
-
-    SH2CoeffsGPU lightingSH = LightingPDF[probeIndex];
-    float3 lightingEval = float3(
-        max(0.0f, dot(lightingSH.R, shBasis)),
-        max(0.0f, dot(lightingSH.G, shBasis)),
-        max(0.0f, dot(lightingSH.B, shBasis))
-    );
-    float lightingPdf = max(0.01f, Luminance(lightingEval));
-
-    // MIS with Power Heuristic (β = 2)
-    // 对于两个采样策略，Power Heuristic 权重为：
-    // w_brdf = brdfPdf² / (brdfPdf² + lightingPdf²)
-    // w_lighting = lightingPdf² / (brdfPdf² + lightingPdf²)
-    // combinedPDF = w_brdf * brdfPdf + w_lighting * lightingPdf
-    float brdfPow = brdfPdf * brdfPdf;
-    float lightingPow = lightingPdf * lightingPdf;
-    float sumPow = brdfPow + lightingPow;
-
-    // 组合 PDF：每个 PDF 按其 Power Heuristic 权重贡献
-    float combinedPDF = (brdfPow * brdfPdf + lightingPow * lightingPdf) / max(sumPow, 0.0001f);
-
+    
+    float3 probeNormal = probe.WorldNormal;
+    
+    // 加载 PDF SH
+    SH2RGB brdfSH;
+    brdfSH.R = BRDFPDF[probeIndex].R;
+    brdfSH.G = BRDFPDF[probeIndex].G;
+    brdfSH.B = BRDFPDF[probeIndex].B;
+    
+    SH2RGB lightingSH;
+    lightingSH.R = LightingPDF[probeIndex].R;
+    lightingSH.G = LightingPDF[probeIndex].G;
+    lightingSH.B = LightingPDF[probeIndex].B;
+    
+    // 基础采样方向 (Fibonacci 半球)
+    float3 baseDir = FibonacciHemisphere(rayIndex, RaysPerProbe, probeNormal);
+    
+    // 添加随机抖动
+    uint seed = probeIndex * RaysPerProbe + rayIndex + CurrentFrame * 1337u;
+    float2 jitter = Random2D(seed) * 0.1f;
+    
+    // 在切线空间中抖动
+    float3 up = abs(probeNormal.y) < 0.999f ? float3(0, 1, 0) : float3(1, 0, 0);
+    float3 tangent = normalize(cross(up, probeNormal));
+    float3 bitangent = cross(probeNormal, tangent);
+    
+    float3 sampleDir = normalize(baseDir + tangent * jitter.x + bitangent * jitter.y);
+    
+    // 确保在半球内
+    if (dot(sampleDir, probeNormal) < 0.0f)
+    {
+        sampleDir = reflect(sampleDir, probeNormal);
+    }
+    
+    // 评估组合 PDF
+    float brdfPDF = max(0.001f, (EvaluateSH(brdfSH.R, sampleDir) + 
+                                 EvaluateSH(brdfSH.G, sampleDir) + 
+                                 EvaluateSH(brdfSH.B, sampleDir)) / 3.0f);
+    
+    float lightingPDF = max(0.001f, (EvaluateSH(lightingSH.R, sampleDir) + 
+                                      EvaluateSH(lightingSH.G, sampleDir) + 
+                                      EvaluateSH(lightingSH.B, sampleDir)) / 3.0f);
+    
+    // MIS 组合
+    float combinedPDF = BRDFWeight * brdfPDF + LightingWeight * lightingPDF;
+    combinedPDF = max(0.001f, combinedPDF);
+    
     ImportanceSampleGPU sample;
     sample.Direction = sampleDir;
     sample.PDF = combinedPDF;
-    SampleDirections[globalRayIndex] = sample;
+    SampleDirections[globalIndex] = sample;
 }

@@ -1,8 +1,14 @@
 #include "VoxelSceneCommon.hlsli"
 
 RWBuffer<uint> VoxelVisibility : register(u0);
+
+// SRVs (Root Parameter 2 - SRV Table, 从t1开始)
 StructuredBuffer<MeshSDFInfoGPU> InstanceInfos : register(t1, space0);
+
+// GlobalSDF SRV (Root Parameter 3)
 Texture3D<float2> GlobalSDF : register(t0, space0);
+
+// Bindless SDF Textures (Root Parameter 4)
 Texture3D<float> g_SDFTextures[MAX_SDF_TEXTURES] : register(t0, space1);
 
 SamplerState LinearSampler : register(s0);
@@ -17,6 +23,8 @@ uint PackVisibility(uint meshIndex, float distance, float voxelSize)
     return (meshIndex << 16) | quantizedDist;
 }
 
+// SDF sphere trace along direction
+// 支持从mesh内部开始追踪（寻找表面出口点）
 bool TraceMeshSDF(float3 startPos, float3 direction, uint meshIndex,
                   out float hitDistance, float maxDistance, float voxelSize)
 {
@@ -26,6 +34,7 @@ bool TraceMeshSDF(float3 startPos, float3 direction, uint meshIndex,
     const int MAX_STEPS = 64;
     const float SURFACE_THRESHOLD = voxelSize * 0.5;
 
+    // 检测起始点是否在mesh内部
     float3 localStart = mul(sdfInfo.WorldToLocal, float4(startPos, 1.0)).xyz;
     float3 bmin = sdfInfo.LocalBoundsMin;
     float3 bmax = sdfInfo.LocalBoundsMax;
@@ -35,20 +44,22 @@ bool TraceMeshSDF(float3 startPos, float3 direction, uint meshIndex,
     if (all(uvwStart >= 0.0) && all(uvwStart <= 1.0))
     {
         float sdfStart = g_SDFTextures[sdfInfo.SDFTextureIndex].SampleLevel(LinearSampler, uvwStart, 0);
-        startedInside = (sdfStart <= 0.0);  // Negative or zero = inside or on surface
+        startedInside = (sdfStart <= 0.0);  // 负值或0表示在内部或表面
     }
 
+    // 如果从内部开始，使用固定步长向外追踪直到找到表面
     if (startedInside)
     {
         float prevSDF = -1.0;
         for (int step = 0; step < MAX_STEPS; ++step)
         {
-            t += voxelSize * 0.5;
+            t += voxelSize * 0.5;  // 固定小步长
 
             float3 worldPos = startPos + direction * t;
             float3 localPos = mul(sdfInfo.WorldToLocal, float4(worldPos, 1.0)).xyz;
             float3 uvw = (localPos - bmin) / (bmax - bmin);
 
+            // 出了bounds，认为找到了边界
             if (any(uvw < 0.0) || any(uvw > 1.0))
             {
                 hitDistance = t;
@@ -58,6 +69,7 @@ bool TraceMeshSDF(float3 startPos, float3 direction, uint meshIndex,
             float sdfDist = g_SDFTextures[sdfInfo.SDFTextureIndex].SampleLevel(LinearSampler, uvw, 0);
             float worldDist = sdfDist * sdfInfo.LocalToWorldScale;
 
+            // 从负到正穿过表面
             if (worldDist >= 0.0 && prevSDF < 0.0)
             {
                 hitDistance = t;
@@ -72,11 +84,13 @@ bool TraceMeshSDF(float3 startPos, float3 direction, uint meshIndex,
         return false;
     }
 
+    // 从外部开始的标准sphere tracing
     for (int step = 0; step < MAX_STEPS; ++step)
     {
         float3 worldPos = startPos + direction * t;
         float3 localPos = mul(sdfInfo.WorldToLocal, float4(worldPos, 1.0)).xyz;
 
+        // Check bounds
         if (any(localPos < bmin - voxelSize) || any(localPos > bmax + voxelSize))
         {
             t += voxelSize;
@@ -135,6 +149,7 @@ void CSMain(uint3 dispatchThreadID : SV_DispatchThreadID)
     
     float3 worldPos = SceneBoundsMin + (float3(voxelCoord) + 0.5) * VoxelSize;
     
+    // 找到包含这个点的 mesh
     int containingMesh = -1;
     for (uint i = 0; i < InstanceCount; ++i)
     {
@@ -159,6 +174,7 @@ void CSMain(uint3 dispatchThreadID : SV_DispatchThreadID)
         return;
     }
     
+    // 6 方向 ray trace
     const float3 directions[6] = {
         float3(1, 0, 0), float3(-1, 0, 0),
         float3(0, 1, 0), float3(0, -1, 0),
@@ -171,10 +187,14 @@ void CSMain(uint3 dispatchThreadID : SV_DispatchThreadID)
     for (uint d = 0; d < 6; ++d)
     {
         float hitDist;
+        // 只对包含此voxel的mesh做ray trace，找到其表面距离
+        // 这样InjectVoxelLighting可以用这个距离采样该mesh的Card
         if (TraceMeshSDF(worldPos, directions[d], uint(containingMesh), hitDist, maxTraceDist, VoxelSize.x))
         {
+            // Pack: 每个方向用 5 bits 存储距离信息
             uint quantized = min(uint(hitDist / maxTraceDist * 31.0), 31u);
-            quantized = max(quantized, 1u);  // Ensure at least 1 to avoid being skipped
+            // 确保至少为1，避免被InjectVoxelLighting跳过
+            quantized = max(quantized, 1u);
             visibility |= (quantized << (d * 5));
         }
     }

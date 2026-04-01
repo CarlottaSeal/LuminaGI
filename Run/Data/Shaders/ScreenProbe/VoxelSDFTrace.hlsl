@@ -1,23 +1,29 @@
 //=============================================================================
 // VoxelSDFTrace.hlsl
-// Pass 6.5/6.6: Voxel SDF Trace - trace Global SDF and sample VoxelLighting
+// Pass 6.5/6.6: Voxel SDF Trace (合并 Mesh 和 Voxel 追踪)
+// 追踪 Global SDF，命中后采样 VoxelLighting
 //=============================================================================
 
 #include "ScreenProbeCommon.hlsli"
 #include "ScreenProbeRegisters.hlsli"
 
-StructuredBuffer<ScreenProbeGPU> ProbeBuffer : register(REG_PROBE_BUFFER_SRV);
-StructuredBuffer<ImportanceSampleGPU> SampleDirections : register(REG_SAMPLE_DIR_SRV);
+//=============================================================================
+// 资源绑定 - 使用 Bindless 寄存器号
+//=============================================================================
 
-Texture2D<float>  GBufferDepth  : register(REG_DEPTH_BUFFER);
-Texture2D<float4> GBufferNormal : register(REG_GBUFFER_NORMAL);
+StructuredBuffer<ScreenProbeGPU> ProbeBuffer : register(REG_PROBE_BUFFER_SRV);      // t401
+StructuredBuffer<ImportanceSampleGPU> SampleDirections : register(REG_SAMPLE_DIR_SRV); // t410
 
-Texture3D<float2> GlobalSDF     : register(REG_GLOBAL_SDF_SRV);     // R=distance, G=instance index
-Texture3D<float4> VoxelLighting : register(REG_VOXEL_LIGHTING_SRV);
+Texture3D<float2> GlobalSDF     : register(REG_GLOBAL_SDF_SRV);     // t378, R=距离, G=实例索引
+Texture3D<float4> VoxelLighting : register(REG_VOXEL_LIGHTING_SRV); // t379
 
 RWStructuredBuffer<TraceResult> VoxelTraceResults : register(REG_VOXEL_TRACE_UAV); // u413
 
 SamplerState LinearSampler : register(s1);
+
+//=============================================================================
+// Global SDF 追踪
+//=============================================================================
 
 float3 WorldToSDFUV(float3 worldPos)
 {
@@ -30,9 +36,10 @@ float SampleGlobalSDF(float3 worldPos)
     
     if (any(uv < 0.0f) || any(uv > 1.0f))
         return 1000.0f;
-
+    
+    // GlobalSDF 格式: R = 距离, G = 实例索引
     float2 sdfData = GlobalSDF.SampleLevel(LinearSampler, uv, 0);
-    return sdfData.x * GlobalSDFExtent;
+    return sdfData.x * GlobalSDFExtent;  // 只取距离
 }
 
 bool TraceGlobalSDF(
@@ -56,7 +63,8 @@ bool TraceGlobalSDF(
         if (dist < TraceHitThreshold)
         {
             hitDist = t;
-
+            
+            // 计算法线 (中心差分)
             float eps = VoxelSize * 0.5f;
             hitNormal = normalize(float3(
                 SampleGlobalSDF(pos + float3(eps, 0, 0)) - SampleGlobalSDF(pos - float3(eps, 0, 0)),
@@ -76,6 +84,10 @@ bool TraceGlobalSDF(
     return false;
 }
 
+//=============================================================================
+// Voxel Lighting 采样
+//=============================================================================
+
 float3 WorldToVoxelUV(float3 worldPos)
 {
     return (worldPos - VoxelGridMin) / (VoxelGridMax - VoxelGridMin);
@@ -91,48 +103,38 @@ float3 SampleVoxelLightingAt(float3 worldPos)
     return VoxelLighting.SampleLevel(LinearSampler, uv, 0).rgb;
 }
 
-[numthreads(8, 8, 1)]
-void main(uint3 groupID : SV_GroupID, uint3 groupThreadID : SV_GroupThreadID)
+//=============================================================================
+// 主计算着色器
+//=============================================================================
+
+[numthreads(64, 1, 1)]
+void main(uint3 dispatchThreadID : SV_DispatchThreadID)
 {
-    uint2 probeCoord = groupID.xy;
-    uint probeIndex = probeCoord.y * ProbeGridWidth + probeCoord.x;
-
-    uint rayIndex = groupThreadID.y * 8 + groupThreadID.x;
-    uint globalIndex = probeIndex * RaysPerProbe + rayIndex;
-
-    if (probeCoord.x >= ProbeGridWidth || probeCoord.y >= ProbeGridHeight)
+    uint globalIndex = dispatchThreadID.x;
+    
+    uint probeCount = ProbeGridWidth * ProbeGridHeight;
+    uint probeIndex = globalIndex / RaysPerProbe;
+    uint rayIndex = globalIndex % RaysPerProbe;
+    
+    if (probeIndex >= probeCount)
         return;
-
+    
     ScreenProbeGPU probe = ProbeBuffer[probeIndex];
-
-    TraceResult result = (TraceResult)0;
-    result.HitDistance = MeshSDFTraceDistance;
-    result.HitNormal = float3(0, 1, 0);
-    result.HitCardIndex = 0xFFFFFFFF;
-
-    uint2 localRayCoord = uint2(rayIndex % OctahedronWidth, rayIndex / OctahedronWidth);
-    uint2 screenOffset = uint2(localRayCoord.x, localRayCoord.y % ProbeSpacing);
-    uint2 screenCoord = probeCoord * ProbeSpacing + screenOffset;
-
-    screenCoord = min(screenCoord, uint2(ScreenWidth - 1, ScreenHeight - 1));
-
-    float pixelDepth = GBufferDepth[screenCoord];
-
-    if (pixelDepth <= 0.0f || pixelDepth >= 0.9999f)
+    
+    TraceResult result = (TraceResult)0; 
+    result.HitDistance = MeshSDFTraceDistance;  
+    result.HitNormal = float3(0, 1, 0);         
+    result.HitCardIndex = 0xFFFFFFFF;           
+    
+    if (probe.Validity <= 0.0f)
     {
         VoxelTraceResults[globalIndex] = result;
         return;
     }
-
-    float2 screenUV = (float2(screenCoord) + 0.5f) / float2(ScreenWidth, ScreenHeight);
-    float3 rayWorldPos = ScreenUVToWorld(screenUV, pixelDepth);
-
-    float3 pixelNormal = GBufferNormal[screenCoord].xyz * 2.0f - 1.0f;
-    pixelNormal = SafeNormalize(pixelNormal);
-
+    
     ImportanceSampleGPU sample = SampleDirections[globalIndex];
-
-    float3 rayOrigin = rayWorldPos + pixelNormal * RayBias;
+    
+    float3 rayOrigin = probe.WorldPosition + probe.WorldNormal * RayBias;
     float3 rayDir = sample.Direction;
     
     if (length(rayDir) < 0.001f)
