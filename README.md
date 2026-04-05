@@ -6,19 +6,17 @@ LuminaGI is a real-time global illumination system built on a custom C++/DirectX
 
 This project is a thesis work at SMU Guildhall.
 
-<!-- If you have screenshots, uncomment and update the path below:
-![LuminaGI Demo](docs/screenshots/demo.png)
--->
+<!-- Screenshots coming soon -->
 
 ## Key Features
 
-- **Screen-Space Probe System** -- 11-pass compute pipeline: 240x135 probe grid, 64 importance-sampled rays per probe (~2M rays/frame), with temporal and spatial filtering
+- **Screen-Space Probe System** -- 11-pass compute pipeline: 240x135 probe grid, 64 rays per probe (~2M rays/frame) sampled via joint BRDF + lighting PDF; temporal blend (α=0.05) + bilateral spatial filter weighted by depth and normal; SH2 (4 coefficients/channel) storage per probe
 - **Surface Cache** -- 4096x4096 texture atlas with 6 layers (albedo, normal, material, direct light, indirect light, combined), tile-based allocation with up to 4096 cards
 - **Signed Distance Field Tracing** -- Per-mesh SDF generation (64-128 voxel resolution) with BVH acceleration; global SDF composition for coarse long-range tracing
 - **Voxel Irradiance Volume** -- World-space stable 3D irradiance grid, serving as fallback when mesh SDF misses
-- **Surface Radiosity** -- Multi-bounce indirect lighting via probe grid ray tracing with spherical harmonics integration
+- **Surface Radiosity** -- Multi-bounce indirect lighting via 1024x1024 probe grid on the surface cache atlas; L0-L2 SH (9 coefficients/channel) for higher-fidelity directional representation than screen probes; frame-persistent history for temporal coherence
 - **Dynamic Point Lights** -- Moving point light support with incremental dirty-card relighting, 128-bit per-card light masks, and distance-priority scheduling
-- **Shadow System** -- Directional shadow maps (2048x2048, PCF) + omnidirectional point light cube shadows (1024x1024 x 6 faces, up to 4 lights)
+- **Shadow System** -- Directional shadow maps (2048x2048, PCF) + omnidirectional point light cube shadows (512x512 x 6 faces, up to 4 lights)
 - **Instanced Indexed Drawing** -- Frustum culling, sort-by-material batching, structured buffer instance data
 
 ## Architecture
@@ -55,12 +53,26 @@ LuminaGI
 
 The GI system is implemented in the [Igloo Engine](https://github.com/CarlottaSeal/Igloo) under `Engine/Renderer/GI/`, `Engine/Renderer/Cache/`, and `Engine/Scene/SDF/`.
 
+## Debug Visualization
+
+19 real-time visualization modes toggled at runtime:
+
+| Category | Modes |
+|----------|-------|
+| Geometry | GBuffer Albedo, Normal, Material, WorldPos, Depth |
+| Surface Cache | Albedo, Normal, Direct Light, Indirect Light, Combined |
+| GI Results | Probe Radiance, Probe AO, Radiosity Trace, Voxel Lighting |
+| Shadows | Directional Shadow Map, Point Light Shadow |
+| Diagnostics | SDF Normal, Direct-only, Indirect-only, Final Composite |
+
+These modes were essential for validating each subsystem independently during development — e.g., isolating whether a lighting artifact originated in the surface cache, the probe pipeline, or the final gather.
+
 ## Rendering Pipeline
 
 | Order | Pass | Type | Frequency |
 |-------|------|------|-----------|
 | 1 | Directional Shadow Map (2048x2048) | Rasterization | On sun change |
-| 2 | Point Light Cube Shadow (1024x1024 x 24) | Rasterization | Every frame |
+| 2 | Point Light Cube Shadow (512x512 x 24) | Rasterization | Every frame |
 | 3 | GBuffer | Rasterization | Every frame |
 | 4 | Card Capture (dirty cards only) | Rasterization | On geometry change |
 | 5 | Direct Light Update | Compute | On light change |
@@ -70,9 +82,13 @@ The GI system is implemented in the [Igloo Engine](https://github.com/CarlottaSe
 | 10 | Screen Probes (11 passes) | Compute | Every frame |
 | 11 | Final Composite | Full-screen PS | Every frame |
 
+## Scene Complexity
+
+The test scene consists of a 6×4 grid of floor and ceiling tiles (38 instances of a 12,324-triangle stone tile mesh), 23 perimeter and interior wall segments (43,320 triangles each), and one 49,950-triangle character model -- totaling approximately **1.5 million triangles** across **62 mesh instances**.
+
 ## Performance
 
-Measured at 1920x1080 on a desktop NVIDIA GPU:
+Measured in windowed mode (~1728×864, 2:1 aspect at 90% of a 1080p desktop) on a desktop NVIDIA GPU:
 
 | Component | GPU Time |
 |-----------|----------|
@@ -82,6 +98,27 @@ Measured at 1920x1080 on a desktop NVIDIA GPU:
 | -- Radiance Composite | 0.5 ms |
 | Point Light Cube Shadows | 1.0-2.0 ms |
 | Direct Light Update | 0.2-0.4 ms |
+
+## Implementation Notes
+
+**Importance Sampling**
+Each screen probe samples 64 ray directions via a joint PDF combining a BRDF term (cosine-weighted Lambertian) and a lighting PDF derived from the SH-projected light distribution of the probe's surroundings. The two terms are weighted equally (0.5/0.5). This reduces variance compared to uniform hemisphere sampling without requiring hardware ray tracing.
+
+**Bilateral Filtering**
+The final gather cross-blends radiance from neighboring probes using a bilateral weight:
+```
+depth_weight  = exp(-plane_distance × 10.0)
+normal_weight = pow(saturate(dot(n1, n2)), 4.0)
+```
+This preserves edges at depth discontinuities and surface orientation boundaries, preventing light bleeding between geometrically distinct surfaces.
+
+**SH Resolution Trade-off**
+Screen probes store SH2 (4 coefficients/channel, 3 channels = 12 floats/probe). Surface radiosity uses L0-L2 SH (9 coefficients/channel) on the surface cache atlas for higher directional fidelity on static geometry. The asymmetry is intentional: screen probes are recomputed every frame and prioritize bandwidth; surface radiosity accumulates over multiple frames and can afford the larger footprint.
+
+**Codebase Scale**
+- LuminaGI shaders: 33 HLSL files, ~7,000 lines
+- Engine GI/Cache/SDF subsystems: ~6,000 lines C++
+- Total engine: ~180,000 lines C++
 
 ## Build Requirements
 

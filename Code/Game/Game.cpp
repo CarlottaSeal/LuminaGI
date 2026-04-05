@@ -142,8 +142,8 @@ void Game::Startup()
 	// Room area: x=[3,14], y=[-3.5,3.5], floor z=0, ceiling z=1.8
 	g_theScene->CreateLightEntity("SunLight", LIGHT_DIRECTIONAL, Vec3(), Rgba8(180,180,220, 210), Vec3(1.f, -1.f, -1.f));
 	// Two point lights — one on each side of the protruding partition wall at x~8.5
-	g_theScene->CreateLightEntity("RoomLightLeft", LIGHT_POINT, Vec3(5.5f, 0.f, 1.2f),
-		Rgba8::WHITE, Vec3(), Rgba8(255, 200, 150, 200), 0.f,
+	g_theScene->CreateLightEntity("RoomLightLeft", LIGHT_POINT, Vec3(11.f, -0.5f, 1.4f),
+		Rgba8::WHITE, Vec3(), Rgba8(255, 255, 255, 200), 0.f,
 		Vec3(), 0.5f, 4.f, 0.f, 0.f);
 	m_orbitLight = g_theScene->CreateLightEntity("RoomLightRight", LIGHT_POINT, Vec3(11.f, 0.f, 1.2f),
 		Rgba8::WHITE, Vec3(), Rgba8(255, 200, 150, 200), 0.f,
@@ -180,6 +180,11 @@ void Game::Startup()
 	g_theScene->CreateMeshEntity("Data/Models/Building/Floor02_wall", "Floor02_wall", Vec3(4.75f,  -3.5f, 0.f), EulerAngles(90.f, 0.f, 0.f));
 	g_theScene->CreateMeshEntity("Data/Models/Building/Floor02_wall", "Floor02_wall", Vec3(8.25f,  -3.5f, 0.f), EulerAngles(90.f, 0.f, 0.f));
 	g_theScene->CreateMeshEntity("Data/Models/Building/Floor02_wall", "Floor02_wall", Vec3(11.75f, -3.5f, 0.f), EulerAngles(90.f, 0.f, 0.f));
+
+	// Bishops — one on each side of the partition wall, near the side walls
+	g_theScene->CreateMeshEntity("Data/Models/LewisSet/Bishop_black", "BishopBlack", Vec3(5.5f, 2.5f, 0.1f), EulerAngles(180.f, 0.f, 0.f));
+	g_theScene->CreateMeshEntity("Data/Models/LewisSet/Bishop_white", "BishopWhite", Vec3(11.f, -2.5f, 0.1f), EulerAngles(180.f, 0.f, 0.f));
+	//g_theScene->CreateMeshEntity("Data/Models/lucy", "lucy", Vec3(12.f, 1.5f, 0.f), EulerAngles(-90.f, 0.f, 0.f));
 
 	// Interior: protruding wall from north wall at x~8.5, extending south (yaw=0)
 	// Both faces lit by left light (5.5,0) and right light (11,0)
