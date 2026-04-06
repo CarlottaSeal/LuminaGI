@@ -2,7 +2,7 @@
 
 **Real-Time Global Illumination Inspired by Unreal Engine 5 Lumen**
 
-LuminaGI is a real-time global illumination system built on a custom C++/DirectX 12 engine ([Igloo Engine](https://github.com/CarlottaSeal/Igloo)). It achieves multi-bounce diffuse indirect lighting at interactive frame rates (1920x1080) using software ray tracing -- no hardware ray tracing (DXR) required.
+LuminaGI is a real-time global illumination system built on a custom C++/DirectX 12 engine ([Igloo Engine](https://github.com/CarlottaSeal/Igloo)). It achieves multi-bounce diffuse indirect lighting at interactive frame rates (1920x1080) using software ray tracing, no hardware ray tracing (DXR) required.
 
 This project is a thesis work at SMU Guildhall.
 
@@ -10,14 +10,14 @@ This project is a thesis work at SMU Guildhall.
 
 ## Key Features
 
-- **Screen-Space Probe System** -- 11-pass compute pipeline: 240x135 probe grid, 64 rays per probe (~2M rays/frame) sampled via joint BRDF + lighting PDF; temporal blend (α=0.05) + bilateral spatial filter weighted by depth and normal; SH2 (4 coefficients/channel) storage per probe
-- **Surface Cache** -- 4096x4096 texture atlas with 6 layers (albedo, normal, material, direct light, indirect light, combined), tile-based allocation with up to 4096 cards
-- **Signed Distance Field Tracing** -- Per-mesh SDF generation (64-128 voxel resolution) with BVH acceleration; global SDF composition for coarse long-range tracing
-- **Voxel Irradiance Volume** -- World-space stable 3D irradiance grid, serving as fallback when mesh SDF misses
-- **Surface Radiosity** -- Multi-bounce indirect lighting via 1024x1024 probe grid on the surface cache atlas; L0-L2 SH (9 coefficients/channel) for higher-fidelity directional representation than screen probes; frame-persistent history for temporal coherence
-- **Dynamic Point Lights** -- Moving point light support with incremental dirty-card relighting, 128-bit per-card light masks, and distance-priority scheduling
-- **Shadow System** -- Directional shadow maps (2048x2048, PCF) + omnidirectional point light cube shadows (512x512 x 6 faces, up to 4 lights)
-- **Instanced Indexed Drawing** -- Frustum culling, sort-by-material batching, structured buffer instance data
+- **Screen-Space Probe System**: 11-pass compute pipeline: 240x135 probe grid, 64 rays per probe (~2M rays/frame) sampled via joint BRDF + lighting PDF; temporal blend (α=0.05) + bilateral spatial filter weighted by depth and normal; SH2 (4 coefficients/channel) storage per probe
+- **Surface Cache**: 4096x4096 texture atlas with 6 layers (albedo, normal, material, direct light, indirect light, combined), tile-based allocation with up to 4096 cards
+- **Signed Distance Field Tracing**: Per-mesh SDF generation (64×64×64 cubic volume) with BVH acceleration; global SDF composition for coarse long-range tracing
+- **Voxel Irradiance Volume**: World-space stable 3D irradiance grid, serving as fallback when mesh SDF misses
+- **Surface Radiosity**: Multi-bounce indirect lighting via 1024x1024 probe grid on the surface cache atlas; L0-L2 SH (9 coefficients/channel) for higher-fidelity directional representation than screen probes; frame-persistent history for temporal coherence
+- **Dynamic Point Lights**: Moving point light support with incremental dirty-card relighting, 128-bit per-card light masks, and distance-priority scheduling
+- **Shadow System**: Directional shadow maps (2048x2048, PCF) + omnidirectional point light cube shadows (512x512 x 6 faces, up to 4 lights)
+- **Instanced Indexed Drawing**: Frustum culling, sort-by-material batching, structured buffer instance data
 
 ## Architecture
 
@@ -53,6 +53,35 @@ LuminaGI
 
 The GI system is implemented in the [Igloo Engine](https://github.com/CarlottaSeal/Igloo) under `Engine/Renderer/GI/`, `Engine/Renderer/Cache/`, and `Engine/Scene/SDF/`.
 
+## Screen Probe Pipeline
+
+| Pass | Shader | Operation |
+|------|--------|-----------|
+| 1 | ProbePlacement | Reconstruct world position per 8×8 pixel cell |
+| 2 | BRDFPDFGeneration | Cosine-weighted Lambertian distribution |
+| 3 | LightingPDFGeneration | History reprojection from previous frame |
+| 4 | GenerateSampleDirections | 64 rays/probe via joint BRDF + lighting PDF |
+| 5 | MeshSDFTrace | Sphere trace per-mesh SDFs (0–100 units) |
+| 6 | VoxelSDFTrace | Sphere trace global SDF (100–500 units) |
+| 7 | RadianceComposite | Blend voxel + surface cache radiance at hit points |
+| 8 | SpatialFilter | Bilateral filter weighted by depth and normal |
+| 9 | OctIrradiance | Project per-probe radiance to SH2 (octahedral map) |
+| 10 | FinalGather | 4-probe blend → per-pixel irradiance |
+| 11 | ScreenSpaceTemporalFilter | Temporal blend (α=0.05) for stability |
+
+## Surface Cache Layers
+
+4096×4096 atlas, 6 layers per texel:
+
+| Layer | Contents | Format |
+|-------|----------|--------|
+| 0 | Albedo | RGBA8 |
+| 1 | World-Space Normal | RGBA16F |
+| 2 | Material (roughness / metallic / AO) | RGBA8 |
+| 3 | Direct Light | RGBA16F |
+| 4 | Indirect Light (from radiosity) | RGBA16F |
+| 5 | Combined Light | RGBA16F |
+
 ## Debug Visualization
 
 19 real-time visualization modes toggled at runtime:
@@ -84,7 +113,7 @@ These modes were essential for validating each subsystem independently during de
 
 ## Scene Complexity
 
-The test scene consists of a 6×4 grid of floor and ceiling tiles (38 instances of a 12,324-triangle stone tile mesh), 23 perimeter and interior wall segments (43,320 triangles each), and one 49,950-triangle character model -- totaling approximately **1.5 million triangles** across **62 mesh instances**.
+The test scene consists of a 6×4 grid of floor and ceiling tiles (38 instances of a 12,324-triangle stone tile mesh), 23 perimeter and interior wall segments (43,320 triangles each), and one 49,950-triangle character model: totaling approximately **1.5 million triangles** across **62 mesh instances**.
 
 ## Performance
 
@@ -93,9 +122,9 @@ Measured in windowed mode (~1728×864, 2:1 aspect at 90% of a 1080p desktop) on 
 | Component | GPU Time |
 |-----------|----------|
 | Screen Probe Pipeline (total) | ~5.3 ms |
-| -- Mesh SDF Trace | 2.8 ms |
-| -- Final Gather | 0.5 ms |
-| -- Radiance Composite | 0.5 ms |
+| &nbsp;&nbsp;Mesh SDF Trace | 2.8 ms |
+| &nbsp;&nbsp;Final Gather | 0.5 ms |
+| &nbsp;&nbsp;Radiance Composite | 0.5 ms |
 | Point Light Cube Shadows | 1.0-2.0 ms |
 | Direct Light Update | 0.2-0.4 ms |
 
@@ -114,6 +143,12 @@ This preserves edges at depth discontinuities and surface orientation boundaries
 
 **SH Resolution Trade-off**
 Screen probes store SH2 (4 coefficients/channel, 3 channels = 12 floats/probe). Surface radiosity uses L0-L2 SH (9 coefficients/channel) on the surface cache atlas for higher directional fidelity on static geometry. The asymmetry is intentional: screen probes are recomputed every frame and prioritize bandwidth; surface radiosity accumulates over multiple frames and can afford the larger footprint.
+
+**Dirty Card States**
+Two dirty flags per card: geometry-dirty (object moved → full re-render of albedo/normal/material/direct light layers via rasterization) and lighting-dirty (light moved → compute-only direct light update, skipping rasterization entirely). Moving a point light suppresses full card recapture and routes through the compute path only.
+
+**Firefly Clamping**
+All pipeline stages clamp output luminance to 1/π (≈ 0.318), the physical maximum of the Lambertian BRDF. This prevents any stage from producing radiance above the diffuse surface limit, eliminating firefly artifacts without an arbitrary threshold.
 
 **Codebase Scale**
 - LuminaGI shaders: 33 HLSL files, ~7,000 lines
@@ -139,10 +174,16 @@ Screen probes store SH2 (4 coefficients/channel, 3 channels = 12 floats/probe). 
 3. Build in **Release** or **Debug** configuration (x64)
 4. Run from the `Run/` directory
 
+## Known Limitations
+
+- SDF representation cannot accurately capture thin geometry or highly concave surfaces
+- Fixed probe density (one per 8×8 pixels) may undersample high-frequency lighting variation in small or detailed scenes
+- Point light shadow maps are hard-limited to 4 simultaneous shadow-casting lights
+
 ## Inspired By
 
-- [Lumen (Unreal Engine 5)](https://advances.realtimerendering.com/s2022/SIGGRAPH2022-Advances-Lumen-Wright%20et%20al.pdf) -- Wright, Narkowicz, Jimenez (SIGGRAPH 2022)
-- [GI-1.0](https://gpuopen.com/download/publications/GPUOpen2022_GI1_0.pdf) -- Boisse (AMD GPUOpen, 2022)
+- [Lumen (Unreal Engine 5)](https://advances.realtimerendering.com/s2022/SIGGRAPH2022-Advances-Lumen-Wright%20et%20al.pdf): Wright, Narkowicz, Jimenez (SIGGRAPH 2022)
+- [GI-1.0](https://gpuopen.com/download/publications/GPUOpen2022_GI1_0.pdf): Boisse (AMD GPUOpen, 2022)
 
 ## License
 
