@@ -4,7 +4,7 @@
 
 LuminaGI is a real-time global illumination system built on a custom C++/DirectX 12 engine ([Igloo Engine](https://github.com/CarlottaSeal/Igloo)). It achieves multi-bounce diffuse indirect lighting at interactive frame rates (1920x1080) using software ray tracing, no hardware ray tracing (DXR) required.
 
-This project is a thesis work at SMU Guildhall.
+This project is my thesis work at SMU Guildhall.
 
 <!-- Screenshots coming soon -->
 
