@@ -18,7 +18,7 @@
 #define VIZ_RADIOSITY_TRACE             14  // Radiosity Trace Result
 
 #define VIZ_PROBE_RADIANCE              15  // Screen Probe Radiance
-#define VIZ_PROBE_RADIANCE_FILTERED     16  // Screen Probe Radiance Filtered
+#define VIZ_PROBE_AO                    16  // Probe-based AO
 
 #define VIZ_SHADOW_MAP                  17  // Shadow Map
 #define VIZ_MESH_SDF_NORMAL             18  // Mesh SDF Normal
@@ -29,7 +29,6 @@ cbuffer VisualizationCB : register(b0)
     float4x4 RenderToCameraTransform;
     float4x4 CameraToWorldTransform;
     
-    // 光照参数
     float4x4 LightWorldToCamera;
     float4x4 LightCameraToRender;
     float4x4 LightRenderToClip;
@@ -40,20 +39,17 @@ cbuffer VisualizationCB : register(b0)
     
     float3 AmbientColor;
     float AmbientIntensity;
-    
-    // 可视化参数
+
     uint g_Mode;
     float g_Exposure;
     uint g_ScreenWidth;
     uint g_ScreenHeight;
-    
-    // Probe 参数
+
     uint g_ProbeGridWidth;
     uint g_ProbeGridHeight;
     uint g_ProbeSpacing;
     uint g_OctahedronSize;
-    
-    // Atlas 参数
+
     uint g_AtlasSize;
     uint g_RadiosityProbeGridWidth;
     uint g_RadiosityProbeGridHeight;
@@ -81,7 +77,6 @@ Texture2D<float> g_ShadowMap : register(t384);  // SHADOW_MAP_SRV
 Texture2D<float4> g_RadiosityTraceResult : register(t393);
 
 Texture2D<float4> g_ProbeRadiance : register(t424);
-Texture2D<float4> g_ProbeRadianceFiltered : register(t426);
 Texture2D<float4> g_ScreenIndirectLighting : register(t430);
 
 SamplerState g_PointSampler : register(s0);
@@ -185,10 +180,8 @@ void CSMain(uint3 dispatchID : SV_DispatchThreadID)
     
     float3 result = float3(0, 0, 0);
     
-    // 天空检测
     bool isSky = (depth >= 0.9999);
-    
-    // 读取 GBuffer
+
     float3 albedo = g_GBufferAlbedo[pixelCoord].rgb;
     float3 worldNormal = DecodeNormal(g_GBufferNormal[pixelCoord].rgb);
     float4 materialData = g_GBufferMaterial[pixelCoord];
@@ -213,13 +206,10 @@ void CSMain(uint3 dispatchID : SV_DispatchThreadID)
                 float shadow = SampleShadowPCF(worldPos, worldNormal);
                 float3 directLighting = CalculateDirectLighting(worldPos, worldNormal, albedo, shadow);
                 directLighting *= g_DirectIntensity;
-                
+
+                // FinalGather already baked albedo, IndirectIntensity, and AO — use directly
                 float3 indirectLighting = g_ScreenIndirectLighting[pixelCoord].rgb;
-                indirectLighting *= g_IndirectIntensity;
-                indirectLighting *= lerp(1.0, ao, g_AOStrength);
-                float3 diffuseColor = albedo * (1.0 - metallic);
-                indirectLighting *= diffuseColor;
-                
+
                 result = directLighting + indirectLighting;
                 result = ToneMapACES(result);
                 result = pow(saturate(result), 1.0 / 2.2);
@@ -244,11 +234,8 @@ void CSMain(uint3 dispatchID : SV_DispatchThreadID)
         {
             if (!isSky)
             {
-                float3 indirectLighting = g_ScreenIndirectLighting[pixelCoord].rgb;
-                indirectLighting *= g_IndirectIntensity;
-                indirectLighting *= lerp(1.0, ao, g_AOStrength);
-                float3 diffuseColor = albedo * (1.0 - metallic);
-                result = indirectLighting * diffuseColor;
+                // FinalGather already baked albedo, IndirectIntensity, and AO — use directly
+                result = g_ScreenIndirectLighting[pixelCoord].rgb;
                 result = ToneMapACES(result);
                 result = pow(saturate(result), 1.0 / 2.2);
             }
@@ -256,7 +243,7 @@ void CSMain(uint3 dispatchID : SV_DispatchThreadID)
         }
         
         //=================================================================
-        // GBuffer Modes (5种)
+        // GBuffer Modes (5 types)
         //=================================================================
         case VIZ_GBUFFER_ALBEDO:
         {
@@ -279,7 +266,6 @@ void CSMain(uint3 dispatchID : SV_DispatchThreadID)
         
         case VIZ_GBUFFER_WORLDPOS:
         {
-            // 世界坐标可视化 (归一化到 0-1 范围，方便观察)
             result = frac(worldPos * 0.01);
             break;
         }
@@ -291,7 +277,7 @@ void CSMain(uint3 dispatchID : SV_DispatchThreadID)
         }
         
         //=================================================================
-        // Surface Cache Modes (Atlas 直接显示)
+        // Surface Cache Modes (direct atlas display)
         //=================================================================
         case VIZ_SURFCACHE_ALBEDO:
         {
@@ -359,10 +345,14 @@ void CSMain(uint3 dispatchID : SV_DispatchThreadID)
             break;
         }
         
-        case VIZ_PROBE_RADIANCE_FILTERED:
+        case VIZ_PROBE_AO:
         {
-            uint2 atlasCoord = GetProbeAtlasCoord(pixelCoord);
-            result = g_ProbeRadianceFiltered[atlasCoord].rgb;
+            result = float3(0, 1, 0);
+            if (!isSky)
+            {
+                float ao = g_ScreenIndirectLighting[pixelCoord].a;
+                result = float3(ao, ao, ao);
+            }
             break;
         }
         

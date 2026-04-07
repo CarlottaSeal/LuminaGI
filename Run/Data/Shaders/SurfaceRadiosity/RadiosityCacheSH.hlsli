@@ -1,27 +1,27 @@
 //=============================================================================
 // RadiosityCacheSH.hlsli
-// 球谐函数 (Spherical Harmonics) - L0 + L1 = 4 个基函数
+// Spherical Harmonics — L0 + L1 = 4 basis functions
 //=============================================================================
 
 #ifndef RADIOSITY_CACHE_SH_HLSLI
 #define RADIOSITY_CACHE_SH_HLSLI
 
 //=============================================================================
-// SH 基函数系数
+// SH basis function coefficients
 //=============================================================================
 
-// L0 (常数项)
+// L0 (constant term)
 static const float SH_L0 = 0.282095f;  // 1 / (2 * sqrt(PI))
 
-// L1 (线性项)
+// L1 (linear terms)
 static const float SH_L1 = 0.488603f;  // sqrt(3) / (2 * sqrt(PI))
 
-// Cosine lobe 的 SH 系数 (用于漫反射)
+// SH coefficients of cosine lobe (diffuse)
 static const float CosineLobeA0 = 3.14159265f;  // PI
 static const float CosineLobeA1 = 2.09439510f;  // 2*PI/3
 
 //=============================================================================
-// SH2 结构体
+// SH2 struct
 //=============================================================================
 
 struct SH2RGB
@@ -32,7 +32,7 @@ struct SH2RGB
 };
 
 //=============================================================================
-// SH 初始化
+// SH initialization
 //=============================================================================
 
 SH2RGB InitSH()
@@ -45,10 +45,10 @@ SH2RGB InitSH()
 }
 
 //=============================================================================
-// SH 评估
+// SH evaluation
 //=============================================================================
 
-// 评估 SH 基函数
+// Evaluate SH basis functions
 float4 EvaluateSHBasis(float3 direction)
 {
     return float4(
@@ -59,14 +59,14 @@ float4 EvaluateSHBasis(float3 direction)
     );
 }
 
-// 从 SH 系数重建方向性辐射度
+// Reconstruct directional radiance from SH
 float EvaluateSH(float4 shCoeffs, float3 direction)
 {
     float4 basis = EvaluateSHBasis(direction);
     return max(0.0f, dot(shCoeffs, basis));
 }
 
-// RGB 版本
+// RGB version
 float3 EvaluateSHRGB(SH2RGB sh, float3 direction)
 {
     float4 basis = EvaluateSHBasis(direction);
@@ -78,17 +78,17 @@ float3 EvaluateSHRGB(SH2RGB sh, float3 direction)
 }
 
 //=============================================================================
-// SH 投影
+// SH projection
 //=============================================================================
 
-// 将单个方向的辐射度投影到 SH
+// Project single-direction radiance onto SH
 void ProjectToSH(float3 direction, float radiance, inout float4 shCoeffs)
 {
     float4 basis = EvaluateSHBasis(direction);
     shCoeffs += basis * radiance;
 }
 
-// RGB 版本
+// RGB version
 void ProjectToSHRGB(float3 direction, float3 radiance, inout SH2RGB sh)
 {
     float4 basis = EvaluateSHBasis(direction);
@@ -98,7 +98,7 @@ void ProjectToSHRGB(float3 direction, float3 radiance, inout SH2RGB sh)
 }
 
 //=============================================================================
-// SH 归一化
+// SH normalization
 //=============================================================================
 
 void NormalizeSH(inout float4 shCoeffs, float normFactor)
@@ -114,7 +114,7 @@ void NormalizeSHRGB(inout SH2RGB sh, float normFactor)
 }
 
 //=============================================================================
-// SH 运算
+// SH arithmetic
 //=============================================================================
 
 SH2RGB AddSH(SH2RGB a, SH2RGB b)
@@ -145,7 +145,7 @@ SH2RGB LerpSH(SH2RGB a, SH2RGB b, float t)
 }
 
 //=============================================================================
-// SH 漫反射照明
+// SH diffuse lighting
 //=============================================================================
 
 float3 SHDiffuse(SH2RGB sh, float3 normal)

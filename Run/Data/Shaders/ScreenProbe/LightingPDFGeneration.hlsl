@@ -1,7 +1,7 @@
 //=============================================================================
 // LightingPDFGeneration.hlsl
 // Pass 6.3: Lighting PDF Generation
-// 利用上一帧的屏幕辐射度估计光照 PDF
+// Estimate lighting PDF from previous frame's screen radiance
 //=============================================================================
 
 #include "ScreenProbeCommon.hlsli"
@@ -42,20 +42,20 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
     float3 probeWorldPos = probe.WorldPosition;
     float3 probeNormal = probe.WorldNormal;
     
-    // 采样多个方向，从上一帧屏幕重投影获取亮度
+    // Sample multiple directions; reproject luminance from previous frame screen
     float totalWeight = 0.0f;
     const uint numSamples = 32;
     
     [loop]
     for (uint i = 0; i < numSamples; i++)
     {
-        // Fibonacci 采样方向
+        // Fibonacci sample direction
         float3 sampleDir = FibonacciHemisphere(i, numSamples, probeNormal);
         
-        // 沿方向偏移一小段距离
+        // Offset along direction
         float3 sampleWorldPos = probeWorldPos + sampleDir * 1.0f;
         
-        // 重投影到上一帧屏幕
+        // Reproject to previous frame screen
         float4 prevCameraPos = mul(PrevWorldToCamera, float4(sampleWorldPos, 1.0f));
         float4 prevRenderPos = mul(PrevCameraToRender, prevCameraPos);
         float4 prevClipPos = mul(PrevRenderToClip, prevRenderPos);
@@ -64,11 +64,11 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
         prevNDC.y = -prevNDC.y;
         float2 prevUV = prevNDC * 0.5f + 0.5f;
         
-        // 检查是否在屏幕内
+        // Check screen bounds
         if (prevUV.x >= 0.0f && prevUV.x <= 1.0f && 
             prevUV.y >= 0.0f && prevUV.y <= 1.0f)
         {
-            // 采样上一帧辐射度
+            // Sample previous frame radiance
             float3 prevRadiance = PrevScreenRadiance.SampleLevel(LinearSampler, prevUV, 0).rgb;
             float luminance = Luminance(prevRadiance);
             
@@ -83,14 +83,14 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
         }
     }
     
-    // 归一化
+    // Normalize
     if (totalWeight > 0.0f)
     {
         NormalizeSHRGB(sh, 1.0f / totalWeight);
     }
     else
     {
-        // 没有历史数据：使用均匀分布
+        // No history: use uniform distribution
         sh = InitSH();
         sh.R.x = SH_L0;
         sh.G.x = SH_L0;

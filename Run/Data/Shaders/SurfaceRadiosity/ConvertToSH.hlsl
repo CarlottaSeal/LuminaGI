@@ -1,90 +1,215 @@
 //=============================================================================
 // ConvertToSH.hlsl
-// Surface Radiosity Pass 5.3: Convert to Spherical Harmonics
-//
-// 将滤波后的 Radiance 转换为 SH2 (L0+L1) 系数
+// Iterate 4x4 pixels per probe; project ray directions onto SH basis
 //=============================================================================
 
 #include "RadiosityCacheCommon.hlsli"
-#include "RadiosityCacheSH.hlsli"
 
-//=============================================================================
-// 资源绑定
-//=============================================================================
-
-// Root Parameter [1]: Surface Cache SRVs (t0-t5)
+Texture2D<float4> TraceRadianceFiltered : register(t22);
 Texture2DArray<float4> SurfaceCacheAtlas : register(t0);
 StructuredBuffer<SurfaceCardMetadata> CardMetadataBuffer : register(t1);
 
-// Root Parameter [3]: Radiosity SRVs (t20-t25)
-Texture2D<float4>   RadiosityFiltered : register(t22);
-
-// Root Parameter [4]: Radiosity UAVs (u0-u5)
 RWTexture2D<float4> RadiositySH_R : register(u3);
 RWTexture2D<float4> RadiositySH_G : register(u4);
 RWTexture2D<float4> RadiositySH_B : register(u5);
 
-//=============================================================================
-// 从 Atlas 采样法线
-//=============================================================================
+#define LAYER_NORMAL 1
 
-float3 SampleProbeNormal(uint2 probeCoord)
+//=============================================================================
+// SH structure
+//=============================================================================
+struct FTwoBandSHVector
 {
-    uint probeSpacingInt = (uint)ProbeSpacing;
-    uint2 atlasCoord = probeCoord * probeSpacingInt + probeSpacingInt / 2;
-    
-    // 从法线层采样
-    float4 normalData = SurfaceCacheAtlas.Load(int4(atlasCoord, 1, 0));  // Layer 1 = Normal
+    float4 V;  // [L0, L1y, L1z, L1x]
+};
+
+struct FTwoBandSHVectorRGB
+{
+    FTwoBandSHVector R;
+    FTwoBandSHVector G;
+    FTwoBandSHVector B;
+};
+
+// SH basis functions
+FTwoBandSHVector SHBasisFunction(float3 InputVector)
+{
+    FTwoBandSHVector Result;
+    Result.V.x = 0.282095f;                      // L0
+    Result.V.y = -0.488603f * InputVector.y;     // L1y
+    Result.V.z = 0.488603f * InputVector.z;      // L1z
+    Result.V.w = -0.488603f * InputVector.x;     // L1x
+    return Result;
+}
+
+FTwoBandSHVectorRGB MulSH(FTwoBandSHVector SH, float3 Color)
+{
+    FTwoBandSHVectorRGB Result;
+    Result.R.V = SH.V * Color.r;
+    Result.G.V = SH.V * Color.g;
+    Result.B.V = SH.V * Color.b;
+    return Result;
+}
+
+FTwoBandSHVectorRGB MulSH_Scalar(FTwoBandSHVectorRGB SH, float Scalar)
+{
+    FTwoBandSHVectorRGB Result;
+    Result.R.V = SH.R.V * Scalar;
+    Result.G.V = SH.G.V * Scalar;
+    Result.B.V = SH.B.V * Scalar;
+    return Result;
+}
+
+FTwoBandSHVectorRGB AddSH(FTwoBandSHVectorRGB A, FTwoBandSHVectorRGB B)
+{
+    FTwoBandSHVectorRGB Result;
+    Result.R.V = A.R.V + B.R.V;
+    Result.G.V = A.G.V + B.G.V;
+    Result.B.V = A.B.V + B.B.V;
+    return Result;
+}
+
+//=============================================================================
+// Cosine-weighted hemisphere sampling (for ray direction and PDF)
+//=============================================================================
+float4 CosineSampleHemisphere(float2 E)
+{
+    float Phi = 2.0f * PI * E.x;
+    float CosTheta = sqrt(E.y);
+    float SinTheta = sqrt(1.0f - CosTheta * CosTheta);
+
+    float3 H;
+    H.x = SinTheta * cos(Phi);
+    H.y = SinTheta * sin(Phi);
+    H.z = CosTheta;
+
+    float PDF = CosTheta * (1.0f / PI);
+    return float4(H, PDF);
+}
+
+float3x3 GetTangentBasisFrisvad(float3 TangentZ)
+{
+    float3 TangentX;
+    float3 TangentY;
+
+    if (TangentZ.z < -0.9999999f)
+    {
+        TangentX = float3(0, -1, 0);
+        TangentY = float3(-1, 0, 0);
+    }
+    else
+    {
+        float A = 1.0f / (1.0f + TangentZ.z);
+        float B = -TangentZ.x * TangentZ.y * A;
+        TangentX = float3(1.0f - TangentZ.x * TangentZ.x * A, B, -TangentZ.x);
+        TangentY = float3(B, 1.0f - TangentZ.y * TangentZ.y * A, -TangentZ.y);
+    }
+
+    return float3x3(TangentX, TangentY, TangentZ);
+}
+
+void GetRadiosityRay(uint2 tileIndex, uint2 subTilePos, float3 worldNormal, out float3 worldRay, out float pdf)
+{
+    float2 probeTexelJitter = float2(0.5f, 0.5f);
+    float2 probeUV = (float2(subTilePos) + probeTexelJitter) / float(PROBE_TEXELS_SIZE);
+
+    float4 raySample = CosineSampleHemisphere(probeUV);
+    float3 localRayDirection = raySample.xyz;
+    pdf = raySample.w;
+
+    float3x3 tangentBasis = GetTangentBasisFrisvad(worldNormal);
+    worldRay = mul(localRayDirection, tangentBasis);
+    worldRay = normalize(worldRay);
+}
+
+//=============================================================================
+// Get probe center normal
+//=============================================================================
+float3 GetProbeNormal(uint2 probeStartPos)
+{
+    // Use probe center normal
+    uint2 centerPos = probeStartPos + uint2(PROBE_TEXELS_SIZE / 2, PROBE_TEXELS_SIZE / 2);
+
+    if (centerPos.x >= AtlasWidth || centerPos.y >= AtlasHeight)
+        return float3(0, 0, 1);
+
+    float4 normalData = SurfaceCacheAtlas.Load(int4(centerPos, LAYER_NORMAL, 0));
     float3 normal = normalData.xyz * 2.0f - 1.0f;
     return SafeNormalize(normal);
 }
 
+//=============================================================================
+// Main: iterate 4x4 pixels per tile (probe)
+//=============================================================================
 [numthreads(8, 8, 1)]
-void main(uint3 DispatchThreadID : SV_DispatchThreadID)
+void main(uint3 dispatchThreadID : SV_DispatchThreadID)
 {
-    uint2 probeCoord = DispatchThreadID.xy;
-    
-    if (probeCoord.x >= ProbeGridWidth || probeCoord.y >= ProbeGridHeight)
-        return;
-    
-    // 读取滤波后的 Radiance
-    float4 radianceData = RadiosityFiltered[probeCoord];
+    uint2 tileIndex = dispatchThreadID.xy;
 
-    float3 radiance = radianceData.rgb;
-    float validity = radianceData.a;
-    
-    // 如果 Probe 无效，输出零 SH
-    if (validity <= 0.0f)
+    uint probeGridWidth = AtlasWidth / PROBE_TEXELS_SIZE;
+    uint probeGridHeight = AtlasHeight / PROBE_TEXELS_SIZE;
+
+    if (tileIndex.x >= probeGridWidth || tileIndex.y >= probeGridHeight)
+        return;
+
+    uint2 probeStartPos = tileIndex * PROBE_TEXELS_SIZE;
+
+    // Get probe normal
+    float3 probeNormal = GetProbeNormal(probeStartPos);
+
+    if (dot(probeNormal, probeNormal) < 0.5f)
     {
-        RadiositySH_R[probeCoord] = float4(0, 0, 0, 0);
-        RadiositySH_G[probeCoord] = float4(0, 0, 0, 0);
-        RadiositySH_B[probeCoord] = float4(0, 0, 0, 0);
+        RadiositySH_R[tileIndex] = float4(0, 0, 0, 0);
+        RadiositySH_G[tileIndex] = float4(0, 0, 0, 0);
+        RadiositySH_B[tileIndex] = float4(0, 0, 0, 0);
         return;
     }
-    
-    // 读取 Probe 法线
-    float3 normal = SampleProbeNormal(probeCoord);
-    // 将 Radiance 投影到 SH
-    // 对于漫反射表面，主要方向是法线方向
-    float4 shBasis = EvaluateSHBasis(normal);
-    
-    //RadiositySH_R[probeCoord] = shBasis * 3.0;  // 放大 shBasis
-    //RadiositySH_G[probeCoord] = shBasis * radiance.r * 30.0;  // 放大最终结果
-    //RadiositySH_B[probeCoord] = float4(radiance * 3.0, 1.0); 
-    //return;
-    
-    float4 sh_R = shBasis * radiance.r;
-    float4 sh_G = shBasis * radiance.g;
-    float4 sh_B = shBasis * radiance.b;
-    
-    // 添加环境项 (L0) - 使一部分光照是均匀的
-    float ambientScale = 0.1f;
-    sh_R.x += radiance.r * ambientScale * SH_L0;
-    sh_G.x += radiance.g * ambientScale * SH_L0;
-    sh_B.x += radiance.b * ambientScale * SH_L0;
-    
-    // 输出
-    RadiositySH_R[probeCoord] = sh_R;
-    RadiositySH_G[probeCoord] = sh_G;
-    RadiositySH_B[probeCoord] = sh_B;
+
+    // Initialize SH
+    FTwoBandSHVectorRGB irradianceSH;
+    irradianceSH.R.V = float4(0, 0, 0, 0);
+    irradianceSH.G.V = float4(0, 0, 0, 0);
+    irradianceSH.B.V = float4(0, 0, 0, 0);
+
+    uint numValidSamples = 0;
+
+    // Iterate all 4x4 pixels within the probe
+    for (uint traceIdxY = 0; traceIdxY < PROBE_TEXELS_SIZE; traceIdxY++)
+    {
+        for (uint traceIdxX = 0; traceIdxX < PROBE_TEXELS_SIZE; traceIdxX++)
+        {
+            uint2 pixelPos = probeStartPos + uint2(traceIdxX, traceIdxY);
+
+            if (pixelPos.x >= AtlasWidth || pixelPos.y >= AtlasHeight)
+                continue;
+
+            // Read pixel radiance
+            float3 traceRadiance = TraceRadianceFiltered.Load(int3(pixelPos, 0)).rgb;
+
+            // Get ray direction and PDF for this pixel
+            uint2 subTilePos = uint2(traceIdxX, traceIdxY);
+            float3 worldRay;
+            float pdf;
+            GetRadiosityRay(tileIndex, subTilePos, probeNormal, worldRay, pdf);
+
+            // Project onto SH; divide by PDF
+            if (pdf > 0.001f)
+            {
+                FTwoBandSHVector basis = SHBasisFunction(worldRay);
+                FTwoBandSHVectorRGB contribution = MulSH(basis, traceRadiance / pdf);
+                irradianceSH = AddSH(irradianceSH, contribution);
+                numValidSamples++;
+            }
+        }
+    }
+
+    // Normalize
+    if (numValidSamples > 0)
+    {
+        irradianceSH = MulSH_Scalar(irradianceSH, 1.0f / float(numValidSamples));
+    }
+
+    // Write SH coefficients
+    RadiositySH_R[tileIndex] = irradianceSH.R.V;
+    RadiositySH_G[tileIndex] = irradianceSH.G.V;
+    RadiositySH_B[tileIndex] = irradianceSH.B.V;
 }

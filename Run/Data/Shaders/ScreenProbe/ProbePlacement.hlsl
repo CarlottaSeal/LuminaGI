@@ -1,7 +1,6 @@
 //=============================================================================
 // ProbePlacement.hlsl
-// Pass 6.1: Screen Probe Placement
-// 在屏幕空间放置 Probe，计算世界坐标和法线
+// Pass 6.1: Screen Probe Placement - place probes and compute world pos/normal
 //=============================================================================
 
 #include "ScreenProbeCommon.hlsli"
@@ -73,30 +72,24 @@ float ComputeDepthConsistency(uint2 centerCoord, float centerDepth)
     }
     
     variance = sqrt(variance / float(validCount));
-    return (variance > DepthThreshold) ? saturate(1.0f - variance / (DepthThreshold * 2.0f)) : 1.0f;
+    // Smooth transition via smoothstep; avoids hard-threshold popping
+    // validity smoothly decreases from 1 to 0 as variance goes from 0 to DepthThreshold*2
+    return 1.0f - smoothstep(0.0f, DepthThreshold * 2.0f, variance);
 }
-
-//=============================================================================
-// 主计算着色器
-//=============================================================================
 
 [numthreads(8, 8, 1)]
 void main(uint3 dispatchThreadID : SV_DispatchThreadID)
 {
     uint2 probeCoord = dispatchThreadID.xy;
-    
+
     if (probeCoord.x >= ProbeGridWidth || probeCoord.y >= ProbeGridHeight)
         return;
-    
-    // Probe 中心的屏幕坐标
+
     uint2 screenCoord = probeCoord * ProbeSpacing + ProbeSpacing / 2;
-    
     uint probeIndex = probeCoord.y * ProbeGridWidth + probeCoord.x;
-    
-    // ===== 初始化整个结构体为 0 =====
+
     ScreenProbeGPU probe = (ScreenProbeGPU)0;
 
-    // 边界检查
     if (screenCoord.x >= ScreenWidth || screenCoord.y >= ScreenHeight)
     {
         probe.ScreenX = screenCoord.x;
@@ -110,19 +103,83 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
         ProbeBuffer[probeIndex] = probe;
         return;
     }
-    
-    // 读取深度和法线
-    float depth = DepthBuffer[screenCoord];
+
+    // =========================================================================
+    // Multi-sample depth; select most representative value to avoid edge popping
+    // Sample 3x3 region; use median depth
+    // =========================================================================
+    float depths[9];
+    int validDepthCount = 0;
+
+    [unroll]
+    for (int dy = -1; dy <= 1; dy++)
+    {
+        [unroll]
+        for (int dx = -1; dx <= 1; dx++)
+        {
+            int2 sampleCoord = int2(screenCoord) + int2(dx, dy);
+            sampleCoord = clamp(sampleCoord, int2(0, 0), int2(ScreenWidth - 1, ScreenHeight - 1));
+            float d = DepthBuffer[sampleCoord];
+            if (d > 0.0f && d < 0.9999f)
+            {
+                depths[validDepthCount++] = d;
+            }
+        }
+    }
+
+    // Simple sort to find median (bubble sort on small array)
+    [unroll]
+    for (int i = 0; i < 8; i++)
+    {
+        [unroll]
+        for (int j = i + 1; j < 9; j++)
+        {
+            if (j < validDepthCount && depths[j] < depths[i])
+            {
+                float tmp = depths[i];
+                depths[i] = depths[j];
+                depths[j] = tmp;
+            }
+        }
+    }
+
+    // Use median depth
+    float depth = (validDepthCount > 0) ? depths[validDepthCount / 2] : DepthBuffer[screenCoord];
+
+    // Find pixel closest to median depth to obtain its normal
+    float minDepthDiff = 1000.0f;
+    int2 bestCoord = int2(screenCoord);
+
+    [unroll]
+    for (int dy2 = -1; dy2 <= 1; dy2++)
+    {
+        [unroll]
+        for (int dx2 = -1; dx2 <= 1; dx2++)
+        {
+            int2 sampleCoord = int2(screenCoord) + int2(dx2, dy2);
+            sampleCoord = clamp(sampleCoord, int2(0, 0), int2(ScreenWidth - 1, ScreenHeight - 1));
+            float d = DepthBuffer[sampleCoord];
+            float diff = abs(d - depth);
+            if (diff < minDepthDiff)
+            {
+                minDepthDiff = diff;
+                bestCoord = sampleCoord;
+            }
+        }
+    }
+
+    // [DEBUG] Use center pixel normal directly
     float4 normalData = NormalBuffer[screenCoord];
     float3 normal = SafeNormalize(normalData.xyz * 2.0f - 1.0f);
-    
-    // 计算屏幕 UV
+
+    // Reconstruct world position from depth via ScreenUVToWorld
     float2 screenUV = (float2(screenCoord) + 0.5f) / float2(ScreenWidth, ScreenHeight);
-    
-    // 重建世界坐标
-    float3 worldPos = WorldPosBuffer[screenCoord].xyz;
-    
-    // 计算有效性
+    float3 worldPos = ScreenUVToWorld(screenUV, depth);
+
+    // World-space quantization: snap to fixed grid to reduce micro-jitter
+    const float GRID_SIZE = 0.5f;  // Quantization grid size (world units)
+    worldPos = round(worldPos / GRID_SIZE) * GRID_SIZE;
+
     float validity = 1.0f;
     
     if (depth <= 0.0f || depth >= 0.9999f)
@@ -134,8 +191,7 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
         float depthConsistency = ComputeDepthConsistency(screenCoord, depth);
         validity *= depthConsistency;
     }
-    
-    // 输出 Probe 数据
+
     probe.ScreenX = screenCoord.x;
     probe.ScreenY = screenCoord.y;
     probe.Padding0 = 0;
