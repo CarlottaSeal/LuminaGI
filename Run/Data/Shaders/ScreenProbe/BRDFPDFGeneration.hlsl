@@ -1,12 +1,12 @@
 //=============================================================================
 // BRDFPDFGeneration.hlsl
 // Pass 6.2: BRDF PDF Generation
-// 计算每个 Probe 的 Lambertian BRDF PDF，投影到 SH2
+// Compute per-probe Lambertian BRDF PDF, projected to SH2
 //
-// 对于 Lambertian BRDF，重要性分布是 clamped cosine lobe：
+// For Lambertian BRDF, the importance distribution is a clamped cosine lobe:
 //   PDF(ω) ∝ max(0, dot(ω, normal))
 //
-// 这个分布的 SH 投影是解析的 (Zonal Harmonics)：
+// The SH projection of this distribution is analytic (Zonal Harmonics):
 //   L0: A0 = π
 //   L1: A1 = 2π/3
 //=============================================================================
@@ -20,21 +20,21 @@ StructuredBuffer<ScreenProbeGPU> ProbeBuffer : register(REG_PROBE_BUFFER_SRV);
 RWStructuredBuffer<SH2CoeffsGPU> BRDFPDFOutput : register(REG_BRDF_PDF_UAV);
 
 //=============================================================================
-// 计算 Lambertian BRDF 的 SH 投影 (clamped cosine lobe)
-// 这是解析解，不需要采样
+// Compute SH projection of Lambertian BRDF (clamped cosine lobe)
+// Analytic result — no sampling required
 //=============================================================================
 float4 ProjectLambertianBRDF(float3 normal)
 {
-    // 先计算法线方向的 SH 基函数
+    // Compute SH basis functions for the normal direction
     float4 basis = SHBasisFunction2(normal);
 
-    // Zonal Harmonics 系数 (clamped cosine lobe)
+    // Zonal Harmonics coefficients (clamped cosine lobe)
     // A0 = π (L0 band)
     // A1 = 2π/3 (L1 band)
     float A0 = PI;
     float A1 = 2.0f * PI / 3.0f;
 
-    // 将 ZH 系数应用到旋转后的基函数
+    // Apply ZH coefficients to the rotated basis functions
     return float4(
         basis.x * A0,    // L0
         basis.y * A1,    // L1_y
@@ -44,7 +44,7 @@ float4 ProjectLambertianBRDF(float3 normal)
 }
 
 //=============================================================================
-// 主计算着色器
+// Main compute shader
 //=============================================================================
 
 [numthreads(8, 8, 1)]
@@ -58,10 +58,10 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
     uint probeIndex = probeCoord.y * ProbeGridWidth + probeCoord.x;
     ScreenProbeGPU probe = ProbeBuffer[probeIndex];
 
-    // 检查 Probe 有效性
+    // Check probe validity
     if (probe.Validity <= 0.0f)
     {
-        // 无效探针：使用均匀分布 (只有 L0)
+        // Invalid probe: use uniform distribution (L0 only)
         SH2CoeffsGPU result;
         result.R = float4(SH_L0, 0, 0, 0);
         result.G = float4(SH_L0, 0, 0, 0);
@@ -72,11 +72,11 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
 
     float3 probeNormal = SafeNormalize(probe.WorldNormal);
 
-    // 计算 Lambertian BRDF 的 SH 投影
-    // 这是解析解，不需要采样周围像素
+    // Compute SH projection of Lambertian BRDF
+    // Analytic result — no per-pixel sampling required
     float4 brdfSH = ProjectLambertianBRDF(probeNormal);
 
-    // RGB 通道使用相同的 BRDF（漫反射是颜色无关的）
+    // RGB channels share the same BRDF (diffuse is color-independent)
     SH2CoeffsGPU result;
     result.R = brdfSH;
     result.G = brdfSH;

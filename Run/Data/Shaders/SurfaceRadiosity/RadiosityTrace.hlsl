@@ -1,6 +1,6 @@
 //=============================================================================
 // RadiosityTrace.hlsl
-// Surface Radiosity: SimLumen 风格 - 每像素一条射线
+// Surface Radiosity: one ray per pixel
 //=============================================================================
 
 #include "RadiosityCacheCommon.hlsli"
@@ -24,7 +24,7 @@ SamplerState LinearSampler  : register(s1);
 #define LAYER_COMBINED      5
 
 //=============================================================================
-// SimLumen: Hammersley 序列
+// Hammersley sequence
 //=============================================================================
 float2 Hammersley16(uint Index, uint NumSamples)
 {
@@ -88,11 +88,11 @@ float3x3 GetTangentBasisFrisvad(float3 TangentZ)
 }
 
 //=============================================================================
-// SimLumen: GetRadiosityRay - 根据像素位置生成射线
+// GetRadiosityRay — generate ray from pixel position
 //=============================================================================
 void GetRadiosityRay(uint2 tileIndex, uint2 subTilePos, float3 worldNormal, out float3 worldRay, out float pdf)
 {
-    // Probe texel center (SimLumen 用 0.5, 0.5)
+    // Probe texel center (0.5, 0.5)
     float2 probeTexelJitter = float2(0.5f, 0.5f);
     float2 probeUV = (float2(subTilePos) + probeTexelJitter) / float(PROBE_TEXELS_SIZE);
 
@@ -147,7 +147,7 @@ bool TraceGlobalSDF(float3 origin, float3 direction, float maxDist, out float hi
 }
 
 //=============================================================================
-// Voxel Lighting sampling - SimLumen 风格方向加权近似
+// Voxel Lighting sampling — direction-weighted approximation
 //=============================================================================
 float3 SampleVoxelLightingAtPosition(float3 worldPos, float3 rayDir)
 {
@@ -157,12 +157,12 @@ float3 SampleVoxelLightingAtPosition(float3 worldPos, float3 rayDir)
     if (any(voxelUV < 0.0f) || any(voxelUV > 1.0f))
         return float3(0, 0, 0);
 
-    // SimLumen 风格：沿 3 个主轴方向采样并加权
-    // 由于我们只有 3D 纹理（不是 6 方向 buffer），用偏移采样模拟
+    // Sample along 3 principal axes; blend by direction weight
+    // 3D texture only (not a 6-direction buffer); offset sampling approximates directionality
     float3 voxelSize = voxelExtent / float3(GlobalSDFResolution, GlobalSDFResolution, GlobalSDFResolution);
     float offsetDist = length(voxelSize) * 0.5f;
 
-    // 6 个方向
+    // 6 directions
     float3 directions[6] = {
         float3(1, 0, 0), float3(-1, 0, 0),
         float3(0, 1, 0), float3(0, -1, 0),
@@ -172,16 +172,16 @@ float3 SampleVoxelLightingAtPosition(float3 worldPos, float3 rayDir)
     float3 totalRadiance = float3(0, 0, 0);
     float totalWeight = 0.0f;
 
-    // 采样中心点
+    // Sample center
     float3 centerRadiance = VoxelLighting.SampleLevel(LinearSampler, voxelUV, 0).rgb;
 
-    // 根据射线方向计算每个方向的权重
+    // Compute per-direction weight from ray direction
     for (int i = 0; i < 6; i++)
     {
         float weight = saturate(dot(rayDir, directions[i]));
         if (weight > 0.001f)
         {
-            // 沿该方向偏移采样
+            // Sample offset along this direction
             float3 offsetPos = worldPos + directions[i] * offsetDist;
             float3 offsetUV = (offsetPos - SceneBoundsMin) / voxelExtent;
 
@@ -193,7 +193,7 @@ float3 SampleVoxelLightingAtPosition(float3 worldPos, float3 rayDir)
             }
             else
             {
-                // 如果偏移位置超出范围，用中心值
+                // Out of range: fall back to center sample
                 totalRadiance += centerRadiance * weight;
                 totalWeight += weight;
             }
@@ -209,7 +209,7 @@ float3 SampleVoxelLightingAtPosition(float3 worldPos, float3 rayDir)
 }
 
 //=============================================================================
-// 获取像素的世界位置和法线
+// Get pixel world position and normal
 //=============================================================================
 struct PixelData
 {
@@ -224,7 +224,7 @@ PixelData GetPixelData(uint2 atlasCoord)
     PixelData data;
     data.Valid = false;
 
-    // 找到这个像素属于哪个 Card
+    // Find which Card contains this pixel
     [loop]
     for (uint i = 0; i < ActiveCardCount; i++)
     {
@@ -246,7 +246,7 @@ PixelData GetPixelData(uint2 atlasCoord)
             data.WorldNormal = normalData.xyz * 2.0f - 1.0f;
             data.WorldNormal = SafeNormalize(data.WorldNormal);
 
-            data.Depth = 1.0f; // 简化：假设有效
+            data.Depth = 1.0f; // Simplified: assume valid
             data.Valid = true;
             break;
         }
@@ -256,7 +256,7 @@ PixelData GetPixelData(uint2 atlasCoord)
 }
 
 //=============================================================================
-// Main: SimLumen 风格 - 每像素一条射线
+// Main: one ray per pixel
 //=============================================================================
 [numthreads(16, 16, 1)]
 void main(uint3 dispatchThreadID : SV_DispatchThreadID)
@@ -273,30 +273,30 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
         return;
     }
 
-    // 计算这个像素在 probe grid 中的位置
+    // Compute pixel position within probe grid
     uint2 tileIndex = pixelCoord / PROBE_TEXELS_SIZE;
     uint2 subTilePos = pixelCoord % PROBE_TEXELS_SIZE;
 
-    // SimLumen: 使用 Hammersley jitter（确定性序列，4帧循环）
+    // Hammersley jitter — deterministic sequence, 4-frame cycle
     uint temporalIndex = tileIndex.y * (AtlasWidth / PROBE_TEXELS_SIZE) + tileIndex.x + FrameIndex;
     uint2 probeJitter = GetProbeJitter(temporalIndex);
 
     uint2 probeStartPos = tileIndex * PROBE_TEXELS_SIZE;
     uint2 probeCenterPos = probeStartPos + probeJitter;
 
-    // 获取 probe 中心的像素数据
+    // Get probe center pixel data
     PixelData probeData = GetPixelData(probeCenterPos);
 
     float3 radiance = float3(0, 0, 0);
 
     if (probeData.Valid)
     {
-        // 生成这个像素的射线
+        // Generate ray for this pixel
         float3 worldRay;
         float pdf;
         GetRadiosityRay(tileIndex, subTilePos, probeData.WorldNormal, worldRay, pdf);
 
-        // SDF 追踪
+        // SDF trace
         float3 rayOrigin = probeData.WorldPosition + probeData.WorldNormal * RayBias;
         float hitDist;
         float3 hitPos;
@@ -304,7 +304,7 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
 
         if (hit)
         {
-            // 采样 Voxel Lighting
+            // Sample Voxel Lighting
             radiance = SampleVoxelLightingAtPosition(hitPos, worldRay);
         }
         else
@@ -316,10 +316,10 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
             }
         }
 
-        // SimLumen 归一化: 除以 PI
+        // Normalize: divide by PI
         radiance = radiance * (1.0f / PI);
 
-        // SimLumen firefly clamp: 限制到 1/PI
+        // Firefly clamp: limit to 1/PI (Lambertian BRDF maximum)
         float maxLighting = max(radiance.r, max(radiance.g, radiance.b));
         if (maxLighting > (1.0f / PI))
         {

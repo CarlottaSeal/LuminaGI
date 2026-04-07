@@ -13,7 +13,7 @@ static const float SH_C2_2 = 0.546274f;  // sqrt(15) / (4 * sqrt(PI))
 // PI is already defined in ScreenProbeCommon.hlsli
 
 //=============================================================================
-// 3-band SH 结构体 (9 coefficients per channel, like SimLumen/Lumen)
+// 3-band SH struct (9 coefficients per channel)
 //=============================================================================
 struct SH3
 {
@@ -30,7 +30,7 @@ struct SH3RGB
 };
 
 //=============================================================================
-// 2-band SH 结构体 (4 coefficients per channel)
+// 2-band SH struct (4 coefficients per channel)
 //=============================================================================
 struct SH2RGB
 {
@@ -91,7 +91,7 @@ void NormalizeSHRGB(inout SH2RGB sh, float normFactor)
 }
 
 //=============================================================================
-// 3-band SH 基函数 (9 coefficients)
+// 3-band SH basis functions (9 coefficients)
 //=============================================================================
 SH3 SHBasisFunction3(float3 dir)
 {
@@ -117,7 +117,7 @@ SH3 SHBasisFunction3(float3 dir)
 }
 
 //=============================================================================
-// 2-band SH 基函数 (4 coefficients)
+// 2-band SH basis functions (4 coefficients)
 //=============================================================================
 float4 SHBasisFunction2(float3 dir)
 {
@@ -130,7 +130,7 @@ float4 SHBasisFunction2(float3 dir)
 }
 
 //=============================================================================
-// 3-band SH 投影
+// 3-band SH projection
 //=============================================================================
 void ProjectToSH3(float3 dir, float3 radiance, inout SH3RGB sh)
 {
@@ -150,7 +150,7 @@ void ProjectToSH3(float3 dir, float3 radiance, inout SH3RGB sh)
 }
 
 //=============================================================================
-// 3-band SH 点积 (评估)
+// 3-band SH dot product (evaluation)
 //=============================================================================
 float DotSH3(SH3 a, SH3 b)
 {
@@ -190,7 +190,7 @@ SH3 CalcDiffuseTransferSH3(float3 normal, float exponent)
 }
 
 //=============================================================================
-// 3-band SH 归一化
+// 3-band SH normalization
 //=============================================================================
 void NormalizeSH3RGB(inout SH3RGB sh, float normFactor)
 {
@@ -208,7 +208,7 @@ void NormalizeSH3RGB(inout SH3RGB sh, float normFactor)
 }
 
 //=============================================================================
-// 3-band SH 从方向评估 irradiance
+// 3-band SH irradiance from direction
 //=============================================================================
 float3 EvaluateIrradianceSH3(SH3RGB sh, float3 direction)
 {
@@ -218,7 +218,7 @@ float3 EvaluateIrradianceSH3(SH3RGB sh, float3 direction)
 }
 
 //=============================================================================
-// 2-band SH 操作 (保留兼容性)
+// 2-band SH operations (compatibility)
 //=============================================================================
 float4 EvaluateSHBasis(float3 direction)
 {

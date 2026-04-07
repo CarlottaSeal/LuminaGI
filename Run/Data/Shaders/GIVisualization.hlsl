@@ -243,7 +243,7 @@ void CSMain(uint3 dispatchID : SV_DispatchThreadID)
         }
         
         //=================================================================
-        // GBuffer Modes (5种)
+        // GBuffer Modes (5 types)
         //=================================================================
         case VIZ_GBUFFER_ALBEDO:
         {
@@ -277,7 +277,7 @@ void CSMain(uint3 dispatchID : SV_DispatchThreadID)
         }
         
         //=================================================================
-        // Surface Cache Modes (Atlas 直接显示)
+        // Surface Cache Modes (direct atlas display)
         //=================================================================
         case VIZ_SURFCACHE_ALBEDO:
         {
@@ -347,8 +347,7 @@ void CSMain(uint3 dispatchID : SV_DispatchThreadID)
         
         case VIZ_PROBE_AO:
         {
-            // DEBUG TEST: 先确认这个 case 有没有被执行到
-            result = float3(0, 1, 0);  // 纯绿色 = mode 正确到达
+            result = float3(0, 1, 0);
             if (!isSky)
             {
                 float ao = g_ScreenIndirectLighting[pixelCoord].a;

@@ -7,7 +7,7 @@
 #define RADIOSITY_CACHE_COMMON_HLSLI
 
 //=============================================================================
-// 常量定义
+// Constants
 //=============================================================================
 
 #define PI          3.14159265359f
@@ -16,9 +16,9 @@
 #define INV_PI      0.31830988618f
 #define INV_TWO_PI  0.15915494309f
 
-// SimLumen 常量
-#define PROBE_TEXELS_SIZE       4       // 每个 probe 是 4x4 像素
-#define MAX_FRAME_ACCUMULATED   4       // Hammersley 4 帧循环
+// Probe constants
+#define PROBE_TEXELS_SIZE       4       // Each probe covers a 4x4 pixel tile
+#define MAX_FRAME_ACCUMULATED   4       // Hammersley 4-frame cycle
 
 cbuffer SurfaceRadiosityConstants : register(b0)
 {

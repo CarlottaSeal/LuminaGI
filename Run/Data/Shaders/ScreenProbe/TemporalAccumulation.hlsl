@@ -20,19 +20,19 @@ StructuredBuffer<ScreenProbeGPU> ProbeBuffer : register(REG_PROBE_BUFFER_SRV);
 static const float MAX_RADIANCE = 1.0f / 3.14159265359f;   // SimLumen: 1/PI ≈ 0.318
 static const float BASE_BLEND = 0.02f;  // 2% new frame - very stable (was 5%)
 
-// 检测相机旋转量 - 通过比较当前和前一帧的view矩阵
+// Detect camera rotation magnitude — compare current and previous frame view matrices
 float EstimateCameraRotation()
 {
-    // 提取当前和前一帧相机的前向方向 (view matrix 的第三行)
+    // Extract forward direction from current and previous view matrices (third row)
     float3 currentForward = float3(WorldToCamera[0][2], WorldToCamera[1][2], WorldToCamera[2][2]);
     float3 prevForward = float3(PrevWorldToCamera[0][2], PrevWorldToCamera[1][2], PrevWorldToCamera[2][2]);
 
-    // 计算方向变化
+    // Compute directional change
     float dotProduct = saturate(dot(normalize(currentForward), normalize(prevForward)));
 
-    // 返回旋转因子：0 = 没有旋转，1 = 大幅旋转
+    // Return rotation factor: 0 = no rotation, 1 = large rotation
     // cos(5°) ≈ 0.996, cos(15°) ≈ 0.966, cos(30°) ≈ 0.866
-    return saturate((1.0f - dotProduct) * 20.0f);  // 放大差异
+    return saturate((1.0f - dotProduct) * 20.0f);  // Amplify small differences
 }
 
 [numthreads(8, 8, 1)]

@@ -1,6 +1,6 @@
 //=============================================================================
 // ConvertToSH.hlsl
-// SimLumen 风格: 遍历 probe 内 4x4 像素，用射线方向投影到 SH
+// Iterate 4x4 pixels per probe; project ray directions onto SH basis
 //=============================================================================
 
 #include "RadiosityCacheCommon.hlsli"
@@ -16,7 +16,7 @@ RWTexture2D<float4> RadiositySH_B : register(u5);
 #define LAYER_NORMAL 1
 
 //=============================================================================
-// SimLumen SH 结构
+// SH structure
 //=============================================================================
 struct FTwoBandSHVector
 {
@@ -30,7 +30,7 @@ struct FTwoBandSHVectorRGB
     FTwoBandSHVector B;
 };
 
-// SimLumen SH 基函数
+// SH basis functions
 FTwoBandSHVector SHBasisFunction(float3 InputVector)
 {
     FTwoBandSHVector Result;
@@ -69,7 +69,7 @@ FTwoBandSHVectorRGB AddSH(FTwoBandSHVectorRGB A, FTwoBandSHVectorRGB B)
 }
 
 //=============================================================================
-// SimLumen: Cosine-weighted hemisphere sampling (用于获取射线方向和 PDF)
+// Cosine-weighted hemisphere sampling (for ray direction and PDF)
 //=============================================================================
 float4 CosineSampleHemisphere(float2 E)
 {
@@ -122,11 +122,11 @@ void GetRadiosityRay(uint2 tileIndex, uint2 subTilePos, float3 worldNormal, out 
 }
 
 //=============================================================================
-// 获取 probe 中心的法线
+// Get probe center normal
 //=============================================================================
 float3 GetProbeNormal(uint2 probeStartPos)
 {
-    // 使用 probe 中心的法线
+    // Use probe center normal
     uint2 centerPos = probeStartPos + uint2(PROBE_TEXELS_SIZE / 2, PROBE_TEXELS_SIZE / 2);
 
     if (centerPos.x >= AtlasWidth || centerPos.y >= AtlasHeight)
@@ -138,7 +138,7 @@ float3 GetProbeNormal(uint2 probeStartPos)
 }
 
 //=============================================================================
-// Main: SimLumen 风格 - 每个 tile (probe) 遍历 4x4 像素
+// Main: iterate 4x4 pixels per tile (probe)
 //=============================================================================
 [numthreads(8, 8, 1)]
 void main(uint3 dispatchThreadID : SV_DispatchThreadID)
@@ -153,7 +153,7 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
 
     uint2 probeStartPos = tileIndex * PROBE_TEXELS_SIZE;
 
-    // 获取 probe 的法线
+    // Get probe normal
     float3 probeNormal = GetProbeNormal(probeStartPos);
 
     if (dot(probeNormal, probeNormal) < 0.5f)
@@ -164,7 +164,7 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
         return;
     }
 
-    // 初始化 SH
+    // Initialize SH
     FTwoBandSHVectorRGB irradianceSH;
     irradianceSH.R.V = float4(0, 0, 0, 0);
     irradianceSH.G.V = float4(0, 0, 0, 0);
@@ -172,7 +172,7 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
 
     uint numValidSamples = 0;
 
-    // SimLumen: 遍历 probe 内的所有 4x4 像素
+    // Iterate all 4x4 pixels within the probe
     for (uint traceIdxY = 0; traceIdxY < PROBE_TEXELS_SIZE; traceIdxY++)
     {
         for (uint traceIdxX = 0; traceIdxX < PROBE_TEXELS_SIZE; traceIdxX++)
@@ -182,16 +182,16 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
             if (pixelPos.x >= AtlasWidth || pixelPos.y >= AtlasHeight)
                 continue;
 
-            // 读取这个像素的 radiance
+            // Read pixel radiance
             float3 traceRadiance = TraceRadianceFiltered.Load(int3(pixelPos, 0)).rgb;
 
-            // 获取这个像素的射线方向和 PDF
+            // Get ray direction and PDF for this pixel
             uint2 subTilePos = uint2(traceIdxX, traceIdxY);
             float3 worldRay;
             float pdf;
             GetRadiosityRay(tileIndex, subTilePos, probeNormal, worldRay, pdf);
 
-            // SimLumen: 投影到 SH，除以 PDF
+            // Project onto SH; divide by PDF
             if (pdf > 0.001f)
             {
                 FTwoBandSHVector basis = SHBasisFunction(worldRay);
@@ -202,13 +202,13 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
         }
     }
 
-    // SimLumen: 归一化
+    // Normalize
     if (numValidSamples > 0)
     {
         irradianceSH = MulSH_Scalar(irradianceSH, 1.0f / float(numValidSamples));
     }
 
-    // 输出 SH 系数
+    // Write SH coefficients
     RadiositySH_R[tileIndex] = irradianceSH.R.V;
     RadiositySH_G[tileIndex] = irradianceSH.G.V;
     RadiositySH_B[tileIndex] = irradianceSH.B.V;

@@ -1,158 +1,158 @@
 //=============================================================================
 // ShadowCommon.hlsli
-// 阴影系统通用定义和配置
+// Shadow system common definitions and configuration
 //=============================================================================
 
 #ifndef SHADOW_COMMON_HLSLI
 #define SHADOW_COMMON_HLSLI
 
 //-----------------------------------------------------------------------------
-// 配置参数（可根据需要调整）
+// Configuration parameters
 //-----------------------------------------------------------------------------
 
-// Shadow Map 分辨率
+// Shadow map resolution
 #ifndef SHADOW_MAP_SIZE
 #define SHADOW_MAP_SIZE 4096
 #endif
 
-// PCF 采样核大小 (3=3x3, 5=5x5, 7=7x7)
+// PCF kernel size (3=3x3, 5=5x5, 7=7x7)
 #ifndef PCF_KERNEL_SIZE
 #define PCF_KERNEL_SIZE 5
 #endif
 
-// 基础深度偏移（防止shadow acne）
+// Base depth bias (prevents shadow acne)
 #ifndef SHADOW_BIAS
 #define SHADOW_BIAS 0.005f
 #endif
 
-// 斜率缩放偏移（表面越倾斜偏移越大）
+// Slope-scale bias (larger for glancing surfaces)
 #ifndef SLOPE_BIAS
 #define SLOPE_BIAS 0.01f
 #endif
 
-// 最大偏移限制
+// Maximum bias clamp
 #ifndef MAX_SHADOW_BIAS
 #define MAX_SHADOW_BIAS 0.05f
 #endif
 
-// 法线偏移（防止光线泄漏）- 关键！
+// Normal offset (prevents light leaking)
 #ifndef NORMAL_OFFSET
-#define NORMAL_OFFSET 0.05f  // 增大偏移量（原来0.02，现在0.05）
+#define NORMAL_OFFSET 0.05f  // Increased from 0.02 to reduce light leaking
 #endif
 
-// 软阴影半影大小（光源大小模拟）
+// Soft shadow penumbra size (light source simulation)
 #ifndef PENUMBRA_SIZE
 #define PENUMBRA_SIZE 1.0f
 #endif
 
-// Cascaded Shadow Map 级数
+// Cascade count
 #ifndef CASCADE_COUNT
 #define CASCADE_COUNT 4
 #endif
 
 //-----------------------------------------------------------------------------
-// 常量缓冲区定义
+// Constant buffer definitions
 //-----------------------------------------------------------------------------
 
-// 单光源阴影常量
+// Single-light shadow constants
 struct ShadowConstants
 {
-    float4x4 LightViewProj;      // 光源视图投影矩阵
-    float4x4 LightView;          // 光源视图矩阵
-    float4x4 LightProj;          // 光源投影矩阵
-    float ShadowMapSize;         // 阴影贴图尺寸
-    float ShadowBias;            // 深度偏移
-    float SoftnessFactor;        // 软度因子
-    float LightSize;             // 光源大小（PCSS用）
+    float4x4 LightViewProj;      // Light view-projection matrix
+    float4x4 LightView;          // Light view matrix
+    float4x4 LightProj;          // Light projection matrix
+    float ShadowMapSize;         // Shadow map resolution
+    float ShadowBias;            // Depth bias
+    float SoftnessFactor;        // Softness factor
+    float LightSize;             // Light size (for PCSS)
 };
 
-// CSM常量
+// CSM constants
 struct CSMConstants
 {
-    float4x4 CascadeViewProj[CASCADE_COUNT];  // 每级的VP矩阵
-    float4 CascadeSplits;                      // 分割深度 (x,y,z,w)
-    float4 CascadeScales[CASCADE_COUNT];       // 每级的缩放
-    float4 CascadeOffsets[CASCADE_COUNT];      // 每级的偏移
+    float4x4 CascadeViewProj[CASCADE_COUNT];  // Per-cascade view-projection
+    float4 CascadeSplits;                      // Split depths (x,y,z,w)
+    float4 CascadeScales[CASCADE_COUNT];       // Per-cascade scale
+    float4 CascadeOffsets[CASCADE_COUNT];      // Per-cascade offset
     float ShadowMapSize;
     float ShadowBias;
     float2 Padding;
 };
 
 //-----------------------------------------------------------------------------
-// 采样器声明（需要在主shader中定义）
+// Samplers (must be declared in the including shader)
 //-----------------------------------------------------------------------------
 
-// 注意：以下采样器需要在使用此头文件的shader中声明：
+// The following samplers must be declared in the including shader:
 // SamplerComparisonState g_ShadowSampler : register(s1);
 // SamplerState g_PointSampler : register(s0);
 
 //-----------------------------------------------------------------------------
-// 辅助函数
+// Helper functions
 //-----------------------------------------------------------------------------
 
-// 计算自适应深度偏移
+// Compute adaptive depth bias
 float CalculateAdaptiveBias(float NdotL, float baseDepth)
 {
-    // 表面越倾斜（NdotL越小），偏移越大
+    // More bias for glancing surfaces (smaller NdotL)
     float slopeBias = SLOPE_BIAS * sqrt(1.0f - NdotL * NdotL) / max(NdotL, 0.001f);
     float bias = SHADOW_BIAS + slopeBias;
     
-    // 根据深度调整（远处需要更大偏移）
+    // Scale with depth (distant surfaces need larger bias)
     bias *= (1.0f + baseDepth * 0.5f);
     
     return min(bias, MAX_SHADOW_BIAS);
 }
 
-// 应用法线偏移（防止光线泄漏）
+// Apply normal offset (prevents light leaking)
 float3 ApplyNormalOffset(float3 worldPos, float3 worldNormal, float NdotL)
 {
     float offsetScale = NORMAL_OFFSET;
     
-    // 对于掠射角（grazing angles），更激进地偏移
-    // 当NdotL接近0时（表面几乎垂直于光线），偏移量显著增加
+    // More aggressive offset at grazing angles
+    // As NdotL approaches 0 (near-perpendicular surface), bias increases significantly
     float grazingFactor = 1.0f - saturate(NdotL);
-    offsetScale *= (1.0f + grazingFactor * 3.0f);  // 最多增大4倍
+    offsetScale *= (1.0f + grazingFactor * 3.0f);  // Up to 4x increase
     
-    // 沿着法线方向推离表面
+    // Push away from surface along normal
     return worldPos + worldNormal * offsetScale;
 }
 
-// 应用法线+光线方向双重偏移（更强力，防止所有漏光）
+// Apply normal + light direction dual offset (prevents all light leaking)
 float3 ApplyNormalOffsetWithLightDir(float3 worldPos, float3 worldNormal, float3 lightDir, float NdotL)
 {
     float offsetScale = NORMAL_OFFSET;
     
-    // 1. 法线方向偏移
+    // 1. Normal direction offset
     float grazingFactor = 1.0f - saturate(NdotL);
     float normalOffset = offsetScale * (1.0f + grazingFactor * 3.0f);
     
-    // 2. 额外沿光线方向偏移（特别适合墙壁）
+    // 2. Additional light direction offset (effective for walls)
     float lightDirOffset = offsetScale * 0.5f * grazingFactor;
     
-    // 组合两个偏移
+    // Combine both offsets
     return worldPos + worldNormal * normalOffset + lightDir * lightDirOffset;
 }
 
-// 世界坐标转阴影UV（带法线偏移）
+// World position to shadow UV (with normal offset)
 float3 WorldToShadowUV(float3 worldPos, float3 worldNormal, float NdotL, float4x4 lightViewProj)
 {
-    // 先应用法线偏移
+    // Apply normal offset first
     float3 offsetWorldPos = ApplyNormalOffset(worldPos, worldNormal, NdotL);
     
-    // 修复：使用列向量形式 mul(matrix, vector) 以匹配Shadow.hlsl中的矩阵乘法顺序
+    // Column-vector form mul(matrix, vector) — matches Shadow.hlsl convention
     float4 lightSpacePos = mul(lightViewProj, float4(offsetWorldPos, 1.0f));
     lightSpacePos.xyz /= lightSpacePos.w;
     
     float2 shadowUV = lightSpacePos.xy * 0.5f + 0.5f;
-    shadowUV.y = 1.0f - shadowUV.y;  // 翻转Y（DX坐标系）
+    shadowUV.y = 1.0f - shadowUV.y;  // Flip Y (DX coordinate system)
     
     return float3(shadowUV, lightSpacePos.z);
 }
 
-// 世界坐标转阴影UV（带法线+光线方向双重偏移，更强力）
+// World position to shadow UV (dual offset — normal + light direction)
 float3 WorldToShadowUVWithLightDir(float3 worldPos, float3 worldNormal, float3 lightDir, float NdotL, float4x4 lightViewProj)
 {
-    // 应用双重偏移
+    // Apply dual offset
     float3 offsetWorldPos = ApplyNormalOffsetWithLightDir(worldPos, worldNormal, lightDir, NdotL);
     
     float4 lightSpacePos = mul(lightViewProj, float4(offsetWorldPos, 1.0f));
@@ -164,26 +164,26 @@ float3 WorldToShadowUVWithLightDir(float3 worldPos, float3 worldNormal, float3 l
     return float3(shadowUV, lightSpacePos.z);
 }
 
-// 世界坐标转阴影UV（不带法线偏移，兼容旧代码）
+// World position to shadow UV (no offset, legacy compatibility)
 float3 WorldToShadowUV(float3 worldPos, float4x4 lightViewProj)
 {
-    // 修复：使用列向量形式 mul(matrix, vector) 以匹配Shadow.hlsl中的矩阵乘法顺序
+    // Column-vector form mul(matrix, vector) — matches Shadow.hlsl convention
     float4 lightSpacePos = mul(lightViewProj, float4(worldPos, 1.0f));
     lightSpacePos.xyz /= lightSpacePos.w;
     
     float2 shadowUV = lightSpacePos.xy * 0.5f + 0.5f;
-    shadowUV.y = 1.0f - shadowUV.y;  // 翻转Y（DX坐标系）
+    shadowUV.y = 1.0f - shadowUV.y;  // Flip Y (DX coordinate system)
     
     return float3(shadowUV, lightSpacePos.z);
 }
 
-// 检查UV是否在有效范围内
+// Check if UV is within valid range
 bool IsValidShadowUV(float2 uv)
 {
     return all(uv >= 0.0f) && all(uv <= 1.0f);
 }
 
-// 边缘衰减（避免边缘硬切）
+// Edge fade (avoids hard cutoff at shadow map edges)
 float ShadowEdgeFade(float2 uv)
 {
     float2 fade = saturate((0.5f - abs(uv - 0.5f)) * 10.0f);
@@ -191,7 +191,7 @@ float ShadowEdgeFade(float2 uv)
 }
 
 //-----------------------------------------------------------------------------
-// Poisson Disk 采样点（用于高质量PCF/PCSS）
+// Poisson Disk samples (for high-quality PCF/PCSS)
 //-----------------------------------------------------------------------------
 
 static const float2 PoissonDisk16[16] = 
@@ -251,16 +251,16 @@ static const float2 PoissonDisk32[32] =
 };
 
 //-----------------------------------------------------------------------------
-// 随机旋转（用于采样抖动）
+// Random rotation (for sample jitter)
 //-----------------------------------------------------------------------------
 
-// 基于屏幕位置的伪随机旋转角度
+// Screen-position-based pseudo-random rotation angle
 float GetRandomRotation(float2 screenPos)
 {
     return frac(sin(dot(screenPos, float2(12.9898f, 78.233f))) * 43758.5453f) * 6.283185f;
 }
 
-// 旋转2D向量
+// Rotate 2D vector
 float2 RotateVector(float2 v, float angle)
 {
     float s = sin(angle);

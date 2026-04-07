@@ -1,7 +1,5 @@
 #include "ShadowPCF.hlsli"
 
-// 设置为 1 启用 SDF 阴影（需要绑定 GlobalSDF 到 t378）
-// 暂时禁用 - SDF 阴影有问题需要单独调试
 #define ENABLE_SDF_SHADOW 0
 
 #if ENABLE_SDF_SHADOW
@@ -46,11 +44,11 @@ cbuffer CompositeConstants : register(b12)
     float LightSize;
 
 #if ENABLE_SDF_SHADOW
-    // SDF Shadow 参数（启用 SDF 阴影时需要 C++ 端也添加这些字段）
+    // SDF Shadow params (disabled; requires C++ side fields when re-enabled)
     float3 SDFCenter;
     float SDFExtent;
-    float SDFShadowSoftness;  // 默认 8.0
-    float UseSDFShadow;       // 0 = 关闭, 1 = 开启
+    float SDFShadowSoftness;  // Default: 8.0
+    float UseSDFShadow;       // 0 = disabled, 1 = enabled
     float2 SDFPadding;
 #endif
 };
@@ -103,7 +101,7 @@ Texture2D<float4> g_GBufferWorldPos : register(t203);
 Texture2D<float>  g_DepthBuffer     : register(t204);
 
 Texture2D<float> g_ShadowMap : register(t240);
-Texture2D<float4> g_ScreenIndirectLighting : register(t241);  // 需要 C++ 端绑定 temporal filtered output 到这个 slot
+Texture2D<float4> g_ScreenIndirectLighting : register(t241);  // C++ must bind temporal-filtered indirect output to this slot
 TextureCubeArray<float> g_PointLightShadowMaps : register(t242);
 
 #if ENABLE_SDF_SHADOW
@@ -182,11 +180,11 @@ float3 DecodeNormal(float3 encoded)
     return normalize(encoded * 2.0 - 1.0);
 }
 
-// 屏幕空间接触阴影 - 用于墙角等 shadow map 失效的地方
+// Screen-space contact shadow — for corners and near-occluder regions where shadow maps fail
 float ScreenSpaceContactShadow(float3 worldPos, float3 lightDir, float2 screenUV, float depth)
 {
     const int NUM_STEPS = 8;
-    const float RAY_LENGTH = 0.5f;  // 世界空间追踪距离
+    const float RAY_LENGTH = 0.5f;  // Trace distance in world space
 
     float3 rayStart = worldPos;
     float3 rayEnd = worldPos + lightDir * RAY_LENGTH;
@@ -199,7 +197,7 @@ float ScreenSpaceContactShadow(float3 worldPos, float3 lightDir, float2 screenUV
         float t = float(i) / float(NUM_STEPS);
         float3 sampleWorldPos = lerp(rayStart, rayEnd, t);
 
-        // 投影到屏幕空间
+        // Project to screen space
         float4 clipPos = mul(RenderToClipTransform, mul(CameraToRenderTransform, mul(WorldToCameraTransform, float4(sampleWorldPos, 1.0f))));
         clipPos.xyz /= clipPos.w;
 
@@ -211,16 +209,16 @@ float ScreenSpaceContactShadow(float3 worldPos, float3 lightDir, float2 screenUV
 
         float sceneDepth = g_DepthBuffer.SampleLevel(PointSampler, sampleUV, 0);
 
-        // 如果采样点的深度大于场景深度，说明被遮挡
+        // If sample depth exceeds scene depth, the point is occluded
         float rayDepth = clipPos.z;
         if (rayDepth > sceneDepth + 0.001f && sceneDepth > 0.0f && sceneDepth < 0.9999f)
         {
-            // 渐进遮挡
+            // Gradual occlusion accumulation
             occlusion = max(occlusion, 1.0f - t);
         }
     }
 
-    return 1.0f - occlusion * 0.8f;  // 不要完全黑
+    return 1.0f - occlusion * 0.8f;  // Avoid fully black to prevent acne
 }
 
 float SampleShadowMapPCF(float3 worldPos, float3 normal, float2 screenUV, float depth)

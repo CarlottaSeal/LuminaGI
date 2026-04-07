@@ -72,8 +72,8 @@ float ComputeDepthConsistency(uint2 centerCoord, float centerDepth)
     }
     
     variance = sqrt(variance / float(validCount));
-    // 使用 smoothstep 平滑过渡，避免硬阈值导致的跳变
-    // variance 从 0 到 DepthThreshold*2 时，validity 从 1 平滑降到 0
+    // Smooth transition via smoothstep; avoids hard-threshold popping
+    // validity smoothly decreases from 1 to 0 as variance goes from 0 to DepthThreshold*2
     return 1.0f - smoothstep(0.0f, DepthThreshold * 2.0f, variance);
 }
 
@@ -105,8 +105,8 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
     }
 
     // =========================================================================
-    // 多点采样深度，选择最常见的深度值（避免边缘跳变）
-    // 在 3x3 区域采样，选择中位数深度
+    // Multi-sample depth; select most representative value to avoid edge popping
+    // Sample 3x3 region; use median depth
     // =========================================================================
     float depths[9];
     int validDepthCount = 0;
@@ -127,7 +127,7 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
         }
     }
 
-    // 简单排序找中位数（对于小数组直接冒泡）
+    // Simple sort to find median (bubble sort on small array)
     [unroll]
     for (int i = 0; i < 8; i++)
     {
@@ -143,10 +143,10 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
         }
     }
 
-    // 使用中位数深度
+    // Use median depth
     float depth = (validDepthCount > 0) ? depths[validDepthCount / 2] : DepthBuffer[screenCoord];
 
-    // 找到与中位数深度最接近的像素来获取法线
+    // Find pixel closest to median depth to obtain its normal
     float minDepthDiff = 1000.0f;
     int2 bestCoord = int2(screenCoord);
 
@@ -168,16 +168,16 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
         }
     }
 
-    // [DEBUG] 直接用中心点法线，不做复杂选择
+    // [DEBUG] Use center pixel normal directly
     float4 normalData = NormalBuffer[screenCoord];
     float3 normal = SafeNormalize(normalData.xyz * 2.0f - 1.0f);
 
-    // 使用 ScreenUVToWorld 从深度重建世界位置
+    // Reconstruct world position from depth via ScreenUVToWorld
     float2 screenUV = (float2(screenCoord) + 0.5f) / float2(ScreenWidth, ScreenHeight);
     float3 worldPos = ScreenUVToWorld(screenUV, depth);
 
-    // 世界空间量化：将位置对齐到固定网格，减少微小抖动
-    const float GRID_SIZE = 0.5f;  // 量化网格大小（世界单位）
+    // World-space quantization: snap to fixed grid to reduce micro-jitter
+    const float GRID_SIZE = 0.5f;  // Quantization grid size (world units)
     worldPos = round(worldPos / GRID_SIZE) * GRID_SIZE;
 
     float validity = 1.0f;

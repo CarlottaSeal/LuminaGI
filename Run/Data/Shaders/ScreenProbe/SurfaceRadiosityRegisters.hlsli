@@ -1,14 +1,14 @@
 //=============================================================================
 // SurfaceRadiosityRegisters.hlsli
-// Surface Radiosity Shader 寄存器定义
-// UAV 和 SRV 分别连续排列
+// Surface Radiosity shader register layout
+// UAVs and SRVs in separate contiguous ranges
 //=============================================================================
 
 #ifndef SURFACE_RADIOSITY_REGISTERS_HLSLI
 #define SURFACE_RADIOSITY_REGISTERS_HLSLI
 
 //=============================================================================
-// Surface Radiosity UAVs (u0-u7) - 通过 Descriptor Table 映射到 384-391
+// Surface Radiosity UAVs (u0-u7) — Descriptor Table maps to slots 384-391
 //=============================================================================
 #define REG_RAD_TRACE_RESULT_UAV   u0
 #define REG_RAD_HISTORY_UAV        u1
@@ -20,7 +20,7 @@
 #define REG_RAD_PROBE_NORMAL_UAV   u7
 
 //=============================================================================
-// Surface Radiosity SRVs (t20-t27) - 通过 Descriptor Table 映射到 392-399
+// Surface Radiosity SRVs (t20-t27) — Descriptor Table maps to slots 392-399
 //=============================================================================
 #define REG_RAD_TRACE_RESULT_SRV   t20
 #define REG_RAD_HISTORY_SRV        t21

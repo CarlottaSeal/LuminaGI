@@ -263,7 +263,7 @@ PSOutput CardCapturePS(PSInput input)
     float4 materialProps = g_textures[SpecularId].Sample(MaterialSampler, input.texcoord);
     output.material = materialProps;
 
-    // SimLumen 风格：Surface Cache 只用 Lambertian，不需要 roughness/metallic/specular
+    // Surface cache uses Lambertian only; roughness/metallic/specular not needed
     float3 diffuseColor = output.albedo.rgb;
     float3 pixelNormalWorldSpace = worldNormal;
 
@@ -284,7 +284,7 @@ PSOutput CardCapturePS(PSInput input)
 
     float3 totalDiffuseLight = 0;
 
-    // SimLumen 风格：纯 Lambertian，无镜面反射
+    // Pure Lambertian, no specular
     #if CARDCAPTURE_DEBUG_MODE != 5
     {
         float3 sunDiffuseLight = sunDiffuseDot * SunColor.rgb * SunColor.a * shadow;
@@ -339,7 +339,7 @@ PSOutput CardCapturePS(PSInput input)
     }
     #endif
 
-    // SimLumen 风格：Lambertian BRDF = albedo / PI
+    // Lambertian BRDF = albedo / PI
     float3 finalRGB = totalDiffuseLight * diffuseColor.rgb * (1.0 / 3.14159265359);
 
     output.directLight = float4(finalRGB, 1.0);

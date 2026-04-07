@@ -54,27 +54,27 @@ cbuffer ScreenProbeConstants : register(b0)
     uint    Padding3;
     uint    Padding4;
     
-    // Global SDF 参数
+    // Global SDF parameters
     float3  GlobalSDFCenter;
     float   GlobalSDFExtent;
     
     float3  GlobalSDFInvExtent;
     uint    GlobalSDFResolution;
     
-    // Voxel Lighting 参数
+    // Voxel Lighting parameters
     float3  VoxelGridMin;
     float   VoxelSize;
     
     float3  VoxelGridMax;
     uint    VoxelResolution;
     
-    // Surface Cache 参数
+    // Surface Cache parameters
     uint    AtlasWidth;             // 4096
     uint    AtlasHeight;            // 4096
     uint    TileSize;               // 128
     uint    ActiveCardCount;
     
-    // 相机参数
+    // Camera parameters
     float3  CameraPosition;
     float   Padding0;
     

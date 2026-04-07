@@ -1,6 +1,6 @@
 //=============================================================================
 // RadiosityFilter.hlsl
-// SimLumen 风格: 2x2 十字形空间滤波 (每像素级别)
+// 2x2 cross-shaped spatial filter (per-pixel)
 //=============================================================================
 
 #include "RadiosityCacheCommon.hlsli"
@@ -24,12 +24,12 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
         return;
     }
 
-    // SimLumen: 中心权重 2
+    // Center weight: 2
     float centerWeight = 2.0f;
     float3 radiance = centerSample.rgb * centerWeight;
     float totalWeight = centerWeight;
 
-    // SimLumen: 4 邻域十字形采样，每个权重 1
+    // 4-neighbor cross sample; each weight 1
     int2 offsets[4] = { int2(-1, 0), int2(1, 0), int2(0, -1), int2(0, 1) };
 
     [unroll]
@@ -37,7 +37,7 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
     {
         int2 sampleCoord = int2(pixelCoord) + offsets[i];
 
-        // 边界检查
+        // Bounds check
         if (sampleCoord.x >= 0 && sampleCoord.x < (int)AtlasWidth &&
             sampleCoord.y >= 0 && sampleCoord.y < (int)AtlasHeight)
         {

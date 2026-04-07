@@ -61,7 +61,7 @@ void main(uint3 groupID : SV_GroupID, uint3 groupThreadID : SV_GroupThreadID)
     float lightingPdf = max(0.01f, Luminance(lightingEval));
 
     // MIS with Power Heuristic (β = 2)
-    // 对于两个采样策略，Power Heuristic 权重为：
+    // Power Heuristic weights for the two sampling strategies:
     // w_brdf = brdfPdf² / (brdfPdf² + lightingPdf²)
     // w_lighting = lightingPdf² / (brdfPdf² + lightingPdf²)
     // combinedPDF = w_brdf * brdfPdf + w_lighting * lightingPdf
@@ -69,7 +69,7 @@ void main(uint3 groupID : SV_GroupID, uint3 groupThreadID : SV_GroupThreadID)
     float lightingPow = lightingPdf * lightingPdf;
     float sumPow = brdfPow + lightingPow;
 
-    // 组合 PDF：每个 PDF 按其 Power Heuristic 权重贡献
+    // Combined PDF: each strategy contributes weighted by its Power Heuristic
     float combinedPDF = (brdfPow * brdfPdf + lightingPow * lightingPdf) / max(sumPow, 0.0001f);
 
     ImportanceSampleGPU sample;

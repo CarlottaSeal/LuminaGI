@@ -65,7 +65,7 @@ float SampleShadowPCF3x3(
 }
 
 //-----------------------------------------------------------------------------
-// PCF 5x5（推荐默认使用）
+// PCF 5x5 (recommended default)
 //-----------------------------------------------------------------------------
 
 float SampleShadowPCF5x5(
@@ -107,7 +107,7 @@ float SampleShadowPCF5x5(
 }
 
 //-----------------------------------------------------------------------------
-// PCF 7x7（高质量）
+// PCF 7x7 (high quality)
 //-----------------------------------------------------------------------------
 
 float SampleShadowPCF7x7(
@@ -149,7 +149,7 @@ float SampleShadowPCF7x7(
 }
 
 //-----------------------------------------------------------------------------
-// Poisson Disk PCF（高质量，更自然的软边缘）
+// Poisson Disk PCF (high quality, more natural soft edges)
 //-----------------------------------------------------------------------------
 
 float SampleShadowPCFPoisson16(
@@ -160,7 +160,7 @@ float SampleShadowPCFPoisson16(
     float NdotL,
     float4x4 lightViewProj,
     float shadowMapSize,
-    float2 screenPos)  // 用于随机旋转
+    float2 screenPos)  // Screen position for random rotation
 {
     float3 shadowCoord = WorldToShadowUV(worldPos, worldNormal, NdotL, lightViewProj);
     
@@ -171,11 +171,11 @@ float SampleShadowPCFPoisson16(
     float depth = shadowCoord.z - bias;
     float texelSize = 1.0f / shadowMapSize;
     
-    // 随机旋转采样点（减少条纹artifact）
+    // Randomly rotate samples to reduce banding artifacts
     float rotation = GetRandomRotation(screenPos);
     
     float shadow = 0.0f;
-    float radius = PENUMBRA_SIZE;  // 采样半径
+    float radius = PENUMBRA_SIZE;  // Sample radius
     
     [unroll]
     for (int i = 0; i < 16; ++i)
@@ -192,7 +192,7 @@ float SampleShadowPCFPoisson16(
 }
 
 //-----------------------------------------------------------------------------
-// 加权PCF（中心权重更高，模拟高斯滤波）
+// Weighted PCF (higher center weight, approximates Gaussian filter)
 //-----------------------------------------------------------------------------
 
 float SampleShadowPCFWeighted(
@@ -213,7 +213,7 @@ float SampleShadowPCFWeighted(
     float depth = shadowCoord.z - bias;
     float texelSize = 1.0f / shadowMapSize;
     
-    // 5x5 高斯权重（近似）
+    // 5x5 Gaussian weights (approximate)
     static const float weights[5][5] = 
     {
         { 1,  4,  6,  4, 1 },
@@ -246,10 +246,10 @@ float SampleShadowPCFWeighted(
 }
 
 //-----------------------------------------------------------------------------
-// PCSS (Percentage Closer Soft Shadows) - 可变半影
+// PCSS (Percentage Closer Soft Shadows) — variable penumbra
 //-----------------------------------------------------------------------------
 
-// 搜索遮挡物平均深度
+// Search for average occluder depth
 float FindBlockerDepth(
     Texture2D<float> shadowMap,
     SamplerState pointSampler,
@@ -277,7 +277,7 @@ float FindBlockerDepth(
     }
     
     if (blockerCount == 0)
-        return -1.0f;  // 无遮挡
+        return -1.0f;  // No occluder
     
     return blockerSum / (float)blockerCount;
 }
@@ -303,8 +303,8 @@ float SampleShadowPCSS(
     float depth = shadowCoord.z - bias;
     float texelSize = 1.0f / shadowMapSize;
     
-    // 第一步：搜索遮挡物
-    float searchRadius = lightSize * 10.0f;  // 搜索范围
+    // Step 1: Search for occluders
+    float searchRadius = lightSize * 10.0f;  // Search radius
     float blockerDepth = FindBlockerDepth(
         shadowMap, pointSampler,
         shadowCoord.xy, depth,
@@ -312,13 +312,13 @@ float SampleShadowPCSS(
     );
     
     if (blockerDepth < 0.0f)
-        return 1.0f;  // 无遮挡，完全光照
+        return 1.0f;  // No occluder — fully lit
     
-    // 第二步：计算半影大小
+    // Step 2: Compute penumbra size
     float penumbraWidth = (depth - blockerDepth) / blockerDepth * lightSize;
     penumbraWidth = clamp(penumbraWidth, 1.0f, 20.0f);
     
-    // 第三步：使用可变半径的PCF
+    // Step 3: Variable-radius PCF
     float shadow = 0.0f;
     float rotation = GetRandomRotation(screenPos);
     
@@ -337,7 +337,7 @@ float SampleShadowPCSS(
 }
 
 //-----------------------------------------------------------------------------
-// 便捷接口（使用默认PCF 5x5）
+// Convenience wrapper (default PCF 5x5)
 //-----------------------------------------------------------------------------
 
 float SampleShadowPCF(
@@ -353,7 +353,7 @@ float SampleShadowPCF(
 }
 
 //-----------------------------------------------------------------------------
-// Cascaded Shadow Map 采样
+// Cascaded Shadow Map sampling
 //-----------------------------------------------------------------------------
 
 int SelectCascade(float viewDepth, float4 cascadeSplits)
@@ -377,7 +377,7 @@ float SampleShadowCSM(
 {
     int cascade = SelectCascade(viewDepth, cascadeSplits);
     
-    // 修复：使用列向量形式
+    // Column-vector form
     float4 lightSpacePos = mul(cascadeViewProj[cascade], float4(worldPos, 1.0f));
     lightSpacePos.xyz /= lightSpacePos.w;
     
@@ -387,7 +387,7 @@ float SampleShadowCSM(
     if (!IsValidShadowUV(shadowUV))
         return 1.0f;
     
-    // 根据cascade级别调整bias（远处需要更大bias）
+    // Scale bias by cascade level (distant cascades need larger bias)
     float cascadeBias = SHADOW_BIAS * (1.0f + cascade * 0.5f);
     float bias = CalculateAdaptiveBias(NdotL, lightSpacePos.z) + cascadeBias;
     float depth = lightSpacePos.z - bias;
@@ -395,7 +395,7 @@ float SampleShadowCSM(
     float texelSize = 1.0f / shadowMapSize;
     float shadow = 0.0f;
     
-    // 3x3 PCF（CSM每级用较小的核以提升性能）
+    // 3x3 PCF (smaller kernel per cascade for performance)
     [unroll]
     for (int x = -1; x <= 1; ++x)
     {
@@ -411,20 +411,20 @@ float SampleShadowCSM(
 }
 
 //-----------------------------------------------------------------------------
-// 调试可视化
+// Debug visualization
 //-----------------------------------------------------------------------------
 
 float3 VisualizeShadowCascade(float viewDepth, float4 cascadeSplits)
 {
     int cascade = SelectCascade(viewDepth, cascadeSplits);
     
-    // 每级用不同颜色
+    // Different color per cascade
     static const float3 cascadeColors[4] = 
     {
-        float3(1, 0, 0),  // 红 - 最近
-        float3(0, 1, 0),  // 绿
-        float3(0, 0, 1),  // 蓝
-        float3(1, 1, 0)   // 黄 - 最远
+        float3(1, 0, 0),  // Red   — nearest
+        float3(0, 1, 0),  // Green
+        float3(0, 0, 1),  // Blue
+        float3(1, 1, 0)   // Yellow — farthest
     };
     
     return cascadeColors[cascade];

@@ -13,22 +13,22 @@ Texture2D<float4> ProbeRadianceInput : register(REG_PROBE_RAD_FILT_SRV);
 
 RWTexture2D<float4> OctIrradianceOutput : register(REG_PROBE_RAD_UAV);
 
-// SimLumen's OctahedralMapWrapBorder - 处理八面体边界
-// 确保在探针边界处采样连续
+// OctahedralMapWrapBorder — handles octahedral map boundary wrapping
+// Ensures continuous sampling at probe boundaries
 uint2 OctahedralMapWrapBorder(uint2 texelCoord, uint resolution, uint borderSize)
 {
-    // 如果在有效范围内，直接返回
+    // Within valid range: return directly
     if (texelCoord.x >= borderSize && texelCoord.x < resolution - borderSize &&
         texelCoord.y >= borderSize && texelCoord.y < resolution - borderSize)
     {
         return texelCoord;
     }
 
-    // 处理边界包裹
+    // Handle boundary wrap
     int2 signedCoord = int2(texelCoord) - int(borderSize);
     int effectiveRes = int(resolution) - 2 * int(borderSize);
 
-    // 镜像包裹
+    // Mirror wrap
     if (signedCoord.x < 0)
         signedCoord.x = -signedCoord.x - 1;
     if (signedCoord.y < 0)
@@ -102,7 +102,6 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
 
             irradiance = max(irradiance, float3(0, 0, 0));
 
-            // SimLumen: 此处无 firefly clamp
 
             if (any(isnan(irradiance)) || any(isinf(irradiance)))
                 irradiance = float3(0, 0, 0);

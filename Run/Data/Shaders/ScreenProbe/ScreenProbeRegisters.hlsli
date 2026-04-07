@@ -1,15 +1,15 @@
 //=============================================================================
 // ScreenProbeRegisters.hlsli
-// Bindless 风格寄存器定义 - UAV 和 SRV 分别连续排列
+// Bindless register layout — UAVs and SRVs in separate contiguous ranges
 //
-// 重要：此文件必须与 RenderCommon.h 中的描述符索引完全匹配！
+// IMPORTANT: must match descriptor indices in RenderCommon.h exactly
 //=============================================================================
 
 #ifndef SCREENPROBE_REGISTERS_HLSLI
 #define SCREENPROBE_REGISTERS_HLSLI
 
 //=============================================================================
-// 外部资源 (来自其他 Pass)
+// External resources (from other passes)
 //=============================================================================
 
 // GBuffer (t200-t203)
@@ -21,7 +21,7 @@
 #define REG_DEPTH_BUFFER        t218
 
 //=============================================================================
-// Voxel Scene 资源 (从 375 开始)
+// Voxel Scene resources (starting at 375)
 //=============================================================================
 
 // UAVs (375-377)
@@ -38,11 +38,11 @@
 #define REG_VOXEL_VISIBILITY_SRV t383  // Buffer<uint> - Voxel visibility for early rejection
 
 //=============================================================================
-// Surface Radiosity 资源 (从 385 开始)
+// Surface Radiosity resources (starting at 385)
 // UAVs: 385-392, SRVs: 393-400
 //=============================================================================
 
-// UAVs 连续 (385-392)
+// UAVs (385-392)
 #define REG_RAD_TRACE_RESULT_UAV   u385
 #define REG_RAD_HISTORY_UAV        u386
 #define REG_RAD_FILTERED_UAV       u387
@@ -52,7 +52,7 @@
 #define REG_RAD_PROBE_DEPTH_UAV    u391
 #define REG_RAD_PROBE_NORMAL_UAV   u392
 
-// SRVs 连续 (393-400)
+// SRVs (393-400)
 #define REG_RAD_TRACE_RESULT_SRV   t393
 #define REG_RAD_HISTORY_SRV        t394
 #define REG_RAD_FILTERED_SRV       t395
@@ -63,9 +63,9 @@
 #define REG_RAD_PROBE_NORMAL_SRV   t400
 
 //=============================================================================
-// Screen Probe 资源 (从 400 开始)
+// Screen Probe resources (starting at 400)
 // UAVs: 400-414, SRVs: 415-429
-// UAVs 连续 (401-414)
+// UAVs (401-414)
 #define REG_PROBE_BUFFER_UAV              u401
 #define REG_BRDF_PDF_UAV                  u402
 #define REG_LIGHTING_PDF_UAV              u403
@@ -82,7 +82,7 @@
 #define REG_INDIRECT_LIGHT_UAV            u414
 #define REG_PROBE_RAD_HIST_B_UAV          u415
 
-// SRVs 连续 (414-428)
+// SRVs (414-428)
 #define REG_PROBE_BUFFER_SRV              t416
 #define REG_BRDF_PDF_SRV                  t417
 #define REG_LIGHTING_PDF_SRV              t418
@@ -100,7 +100,7 @@
 #define REG_INDIRECT_LIGHT_SRV            t430
 #define REG_PROBE_RAD_HIST_B_SRV          t431
 
-// Screen Indirect Raw (FinalGather 原始输出，时间滤波前)
+// Screen Indirect Raw (FinalGather output before temporal filter)
 #define REG_INDIRECT_RAW_UAV              u433
 #define REG_INDIRECT_RAW_SRV              t434
 

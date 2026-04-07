@@ -33,9 +33,9 @@ void CSMain(uint3 DispatchThreadID : SV_DispatchThreadID)
     float4 direct = SurfaceCacheAtlas.Load(int4(coord, LAYER_DIRECT, 0));
     float4 indirect = SurfaceCacheAtlas.Load(int4(coord, LAYER_INDIRECT, 0));
 
-    // Direct 层已经包含 albedo (directLight * albedo)
-    // Indirect 是 irradiance，需要乘以本表面的 albedo
-    // 注意：IndirectIntensity 只在 FinalGather 中应用一次
+    // Direct layer already includes albedo (directLight * albedo)
+    // Indirect is raw irradiance; multiply by surface albedo
+    // Note: IndirectIntensity is applied once in FinalGather, not here
     float3 combined = direct.rgb * DirectIntensity + indirect.rgb * albedo.rgb;
 
     SurfaceCacheOutput[uint3(coord, LAYER_COMBINED)] = float4(combined, direct.a);
