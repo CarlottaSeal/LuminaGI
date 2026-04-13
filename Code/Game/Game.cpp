@@ -22,6 +22,7 @@
 
 #include "Game/Player.hpp"
 #include "Game/Gamecommon.hpp"
+#include <chrono>
 
 //extern AudioSystem* g_theAudio;
 extern Clock* s_theSystemClock;
@@ -63,20 +64,29 @@ void Game::Startup()
 	sceneConfig.m_renderer = g_theRenderer;
 	sceneConfig.m_giSystem = g_theGISystem;
 	LuminaScene* scene = new LuminaScene(sceneConfig);
-	
+
 	g_theScene = scene;
 	g_theGISystem->SetScene(g_theScene);
-	
+
+	// ===== Chess Scene (commented out) =====
+	/*
 	g_theScene->CreateLightEntity("SunLight", LIGHT_DIRECTIONAL, Vec3(), Rgba8(180,180,220, 210), Vec3(1.f, -1.f, -1.f));
-	/*g_theScene->CreateLightEntity("TestPoint", LIGHT_SPOT, Vec3(10.f, 0.f, 1.8f), Rgba8::WHITE, Vec3(), Rgba8::MAGENTA, 0.35f,
-		Vec3(), 0.2f, 2.5f, 15.f, 45.f);
 
-	DebugAddWorldPoint(Vec3(10.f, 0.f, 1.8f), 0.2f, -1.f, Rgba8::MAGENTA);*/
+	g_theScene->CreateLightEntity("PointLight1", LIGHT_POINT, Vec3(7.f, 0.f, 1.2f),
+		Rgba8::WHITE, Vec3(), Rgba8(255, 200, 150, 200), 0.f,
+		Vec3(), 0.5f, 4.f, 0.f, 0.f);
+	g_theScene->CreateLightEntity("PointLight2", LIGHT_POINT, Vec3(4.f, -2.f, 1.2f),
+		Rgba8::WHITE, Vec3(), Rgba8(255, 200, 150, 200), 0.f,
+		Vec3(), 0.5f, 4.f, 0.f, 0.f);
 
-	//g_theScene->CreateMeshEntity("Data/Models/CornellBox", "CornellBox", Vec3(10.f, 0.f, 0.f));
-	//g_theScene->CreateMeshEntity("Data/Models/KenneyKit/building-corner", "building-corner", Vec3(10.f, 0.f, 0.f));
+	DebugAddWorldQuad(Vec3(-10.f, -10.f, 0.f), Vec3(20.f, -10.f, 0.f), Vec3(20.f, 10.f, 0.f), Vec3(-10.f, 10.f, 0.f), -1.f, Rgba8(60, 60, 60));
+
 	g_theScene->CreateMeshEntity("Data/Models/LewisSet/Bishop_black", "BishopBlack", Vec3(10.f, 0.5f, 0.1f), EulerAngles(180.f, 0.f, 0.f));
 	g_theScene->CreateMeshEntity("Data/Models/LewisSet/King_white", "KingWhite", Vec3(5.f, -0.5f, 0.1f), EulerAngles(180.f, 0.f, 0.f));
+	g_theScene->CreateMeshEntity("Data/Models/LewisSet/Bishop_black", "BishopBlack", Vec3(4.f, 3.f, 0.1f), EulerAngles(304.f, 0.f, 0.f));
+	g_theScene->CreateMeshEntity("Data/Models/LewisSet/King_white", "KingWhite", Vec3(8.f, -3.f, 0.1f), EulerAngles(124.f, 0.f, 0.f));
+	g_theScene->CreateMeshEntity("Data/Models/LewisSet/Bishop_black", "BishopBlack", Vec3(9.f, 2.5f, 0.1f), EulerAngles(220.f, 0.f, 0.f));
+
 	g_theScene->CreateMeshEntity("Data/Models/Building/Stone_floor", "Stone_floor", Vec3(10.f, 0.f, 1.8f));
 	g_theScene->CreateMeshEntity("Data/Models/Building/Stone_floor", "Stone_floor", Vec3(8.f, 0.f, 1.8f));
 	g_theScene->CreateMeshEntity("Data/Models/Building/Stone_floor", "Stone_floor", Vec3(6.f, 0.f, 1.8f));
@@ -84,14 +94,107 @@ void Game::Startup()
 	g_theScene->CreateMeshEntity("Data/Models/Building/Stone_floor", "Stone_floor", Vec3(8.f, 0.f, 0.f));
 	g_theScene->CreateMeshEntity("Data/Models/Building/Stone_floor", "Stone_floor", Vec3(6.f, 0.f, 0.f));
 	g_theScene->CreateMeshEntity("Data/Models/Building/Stone_floor", "Stone_floor", Vec3(4.f, 0.f, 0.f));
+	g_theScene->CreateMeshEntity("Data/Models/Building/Stone_floor", "Stone_floor", Vec3(2.f, 0.f, 0.f));
+	g_theScene->CreateMeshEntity("Data/Models/Building/Stone_floor", "Stone_floor", Vec3(10.f, -4.f, 1.8f));
+	g_theScene->CreateMeshEntity("Data/Models/Building/Stone_floor", "Stone_floor", Vec3( 8.f, -4.f, 1.8f));
+	g_theScene->CreateMeshEntity("Data/Models/Building/Stone_floor", "Stone_floor", Vec3( 6.f, -4.f, 1.8f));
+	g_theScene->CreateMeshEntity("Data/Models/Building/Stone_floor", "Stone_floor", Vec3(10.f, 4.f, 0.f));
+	g_theScene->CreateMeshEntity("Data/Models/Building/Stone_floor", "Stone_floor", Vec3( 8.f, 4.f, 0.f));
+	g_theScene->CreateMeshEntity("Data/Models/Building/Stone_floor", "Stone_floor", Vec3( 6.f, 4.f, 0.f));
+	g_theScene->CreateMeshEntity("Data/Models/Building/Stone_floor", "Stone_floor", Vec3( 4.f, 4.f, 0.f));
+	g_theScene->CreateMeshEntity("Data/Models/Building/Stone_floor", "Stone_floor", Vec3( 2.f, 4.f, 0.f));
+	g_theScene->CreateMeshEntity("Data/Models/Building/Stone_floor", "Stone_floor", Vec3(10.f, -4.f, 0.f));
+	g_theScene->CreateMeshEntity("Data/Models/Building/Stone_floor", "Stone_floor", Vec3( 8.f, -4.f, 0.f));
+	g_theScene->CreateMeshEntity("Data/Models/Building/Stone_floor", "Stone_floor", Vec3( 6.f, -4.f, 0.f));
+	g_theScene->CreateMeshEntity("Data/Models/Building/Stone_floor", "Stone_floor", Vec3( 4.f, -4.f, 0.f));
+	g_theScene->CreateMeshEntity("Data/Models/Building/Stone_floor", "Stone_floor", Vec3( 2.f, -4.f, 0.f));
+	g_theScene->CreateMeshEntity("Data/Models/Building/Stone_floor", "Stone_floor", Vec3(10.f, -2.f, 1.8f));
+	g_theScene->CreateMeshEntity("Data/Models/Building/Stone_floor", "Stone_floor", Vec3( 8.f, -2.f, 1.8f));
+	g_theScene->CreateMeshEntity("Data/Models/Building/Stone_floor", "Stone_floor", Vec3( 6.f, -2.f, 1.8f));
+	g_theScene->CreateMeshEntity("Data/Models/Building/Stone_floor", "Stone_floor", Vec3(4.f, -2.f, 1.8f));
+	g_theScene->CreateMeshEntity("Data/Models/Building/Stone_floor", "Stone_floor", Vec3( 2.f, -2.f, 1.8f));
+	g_theScene->CreateMeshEntity("Data/Models/Building/Stone_floor", "Stone_floor", Vec3(10.f, 2.f, 0.f));
+	g_theScene->CreateMeshEntity("Data/Models/Building/Stone_floor", "Stone_floor", Vec3( 8.f, 2.f, 0.f));
+	g_theScene->CreateMeshEntity("Data/Models/Building/Stone_floor", "Stone_floor", Vec3( 6.f, 2.f, 0.f));
+	g_theScene->CreateMeshEntity("Data/Models/Building/Stone_floor", "Stone_floor", Vec3( 4.f, 2.f, 0.f));
+	g_theScene->CreateMeshEntity("Data/Models/Building/Stone_floor", "Stone_floor", Vec3( 2.f, 2.f, 0.f));
+	g_theScene->CreateMeshEntity("Data/Models/Building/Stone_floor", "Stone_floor", Vec3(10.f, -2.f, 0.f));
+	g_theScene->CreateMeshEntity("Data/Models/Building/Stone_floor", "Stone_floor", Vec3( 8.f, -2.f, 0.f));
+	g_theScene->CreateMeshEntity("Data/Models/Building/Stone_floor", "Stone_floor", Vec3( 6.f, -2.f, 0.f));
+	g_theScene->CreateMeshEntity("Data/Models/Building/Stone_floor", "Stone_floor", Vec3( 4.f, -2.f, 0.f));
+	g_theScene->CreateMeshEntity("Data/Models/Building/Stone_floor", "Stone_floor", Vec3( 2.f, -2.f, 0.f));
+
 	g_theScene->CreateMeshEntity("Data/Models/Building/Floor02_wall", "Floor02_wall", Vec3(5.f, -1.2f, 0.f), EulerAngles(90.f, 0.f, 0.f));
 	g_theScene->CreateMeshEntity("Data/Models/Building/Floor02_wall", "Floor02_wall", Vec3(8.f, -1.2f, 0.f), EulerAngles(90.f, 0.f, 0.f));
 	g_theScene->CreateMeshEntity("Data/Models/Building/Floor02_wall", "Floor02_wall", Vec3(5.f, 1.1f, 0.f), EulerAngles(90.f, 0.f, 0.f));
 	g_theScene->CreateMeshEntity("Data/Models/Building/Floor02_wall", "Floor02_wall", Vec3(9.f, 1.1f, 0.f), EulerAngles(90.f, 0.f, 0.f));
 	g_theScene->CreateMeshEntity("Data/Models/Building/Floor02_wall", "Floor02_wall", Vec3(10.5f, 0.f, 0.f));
+	g_theScene->CreateMeshEntity("Data/Models/Building/Floor02_wall", "Floor02_wall", Vec3(5.5f, -1.5f, 0.f));
+	g_theScene->CreateMeshEntity("Data/Models/Building/Floor02_wall", "Floor02_wall", Vec3(7.f, -3.5f, 0.f), EulerAngles(90.f, 0.f, 0.f));
+	g_theScene->CreateMeshEntity("Data/Models/Building/Floor02_wall", "Floor02_wall", Vec3(9.f, 3.5f, 0.f), EulerAngles(230.f, 0.f, 0.f));
+	g_theScene->CreateMeshEntity("Data/Models/Building/Floor02_wall", "Floor02_wall", Vec3(6.f, 4.5f, 0.f), EulerAngles(270.f, 0.f, 0.f));
+	g_theScene->CreateMeshEntity("Data/Models/Building/Floor02_wall", "Floor02_wall", Vec3(6.f, -4.5f, 0.f), EulerAngles(90.f, 0.f, 0.f));
+	g_theScene->CreateMeshEntity("Data/Models/Building/Floor02_wall", "Floor02_wall", Vec3(9.f, -3.5f, 0.f), EulerAngles(130.f, 0.f, 0.f));
+
+	g_theScene->CreateMeshEntity("Data/Models/lucy", "lucy", Vec3(6.5f, 0.f, 0.f), EulerAngles(-90.f, 0.f, 0.f));
+	*/
+
+	// ===== Indoor Room Scene =====
+	// Room area: x=[3,14], y=[-3.5,3.5], floor z=0, ceiling z=1.8
+	g_theScene->CreateLightEntity("SunLight", LIGHT_DIRECTIONAL, Vec3(), Rgba8(180,180,220, 210), Vec3(1.f, -1.f, -1.f));
+	// Two point lights — one on each side of the protruding partition wall at x~8.5
+	g_theScene->CreateLightEntity("RoomLightLeft", LIGHT_POINT, Vec3(11.f, -0.5f, 1.4f),
+		Rgba8::WHITE, Vec3(), Rgba8(255, 255, 255, 200), 0.f,
+		Vec3(), 0.5f, 4.f, 0.f, 0.f);
+	m_orbitLight = g_theScene->CreateLightEntity("RoomLightRight", LIGHT_POINT, Vec3(11.f, 0.f, 1.2f),
+		Rgba8::WHITE, Vec3(), Rgba8(255, 200, 150, 200), 0.f,
+		Vec3(), 0.5f, 4.f, 0.f, 0.f);
+	m_orbitCenter = Vec3(8.5f, 0.f, 1.2f);
+	m_orbitRadius = 2.5f;
+
+	DebugAddWorldQuad(Vec3(-10.f, -10.f, 0.f), Vec3(20.f, -10.f, 0.f), Vec3(20.f, 10.f, 0.f), Vec3(-10.f, 10.f, 0.f), -1.f, Rgba8(60, 60, 60));
+
+	// Floor (z=0) — 6x4 grid of 2x2 tiles, x={3,5,7,9,11,13}, y={-3,-1,1,3}
+	float floorXs[] = { 3.f, 5.f, 7.f, 9.f, 11.f, 13.f };
+	float floorYs[] = { -3.f, -1.f, 1.f, 3.f };
+	for (float fx : floorXs)
+		for (float fy : floorYs)
+			g_theScene->CreateMeshEntity("Data/Models/Building/Stone_floor", "Stone_floor", Vec3(fx, fy, 0.f));
+
+	// Ceiling (z=1.8) — same 6x4 grid
+	for (float fx : floorXs)
+		for (float fy : floorYs)
+			g_theScene->CreateMeshEntity("Data/Models/Building/Stone_floor", "Stone_floor", Vec3(fx, fy, 1.8f));
+
+	// Perimeter walls
+	// East wall (x~14, yaw=0): extends along Y by default
+	g_theScene->CreateMeshEntity("Data/Models/Building/Floor02_wall", "Floor02_wall", Vec3(14.f, -1.75f, 0.f));
+	g_theScene->CreateMeshEntity("Data/Models/Building/Floor02_wall", "Floor02_wall", Vec3(14.f,  1.75f, 0.f));
+	// West wall (x~3, yaw=0)
+	g_theScene->CreateMeshEntity("Data/Models/Building/Floor02_wall", "Floor02_wall", Vec3(3.f, -1.75f, 0.f));
+	g_theScene->CreateMeshEntity("Data/Models/Building/Floor02_wall", "Floor02_wall", Vec3(3.f,  1.75f, 0.f));
+	// North wall (y~3.5, yaw=90): 3 pieces spanning x=3..14
+	g_theScene->CreateMeshEntity("Data/Models/Building/Floor02_wall", "Floor02_wall", Vec3(4.75f,  3.5f, 0.f), EulerAngles(90.f, 0.f, 0.f));
+	g_theScene->CreateMeshEntity("Data/Models/Building/Floor02_wall", "Floor02_wall", Vec3(8.25f,  3.5f, 0.f), EulerAngles(90.f, 0.f, 0.f));
+	g_theScene->CreateMeshEntity("Data/Models/Building/Floor02_wall", "Floor02_wall", Vec3(11.75f, 3.5f, 0.f), EulerAngles(90.f, 0.f, 0.f));
+	// South wall (y~-3.5, yaw=90): 3 pieces
+	g_theScene->CreateMeshEntity("Data/Models/Building/Floor02_wall", "Floor02_wall", Vec3(4.75f,  -3.5f, 0.f), EulerAngles(90.f, 0.f, 0.f));
+	g_theScene->CreateMeshEntity("Data/Models/Building/Floor02_wall", "Floor02_wall", Vec3(8.25f,  -3.5f, 0.f), EulerAngles(90.f, 0.f, 0.f));
+	g_theScene->CreateMeshEntity("Data/Models/Building/Floor02_wall", "Floor02_wall", Vec3(11.75f, -3.5f, 0.f), EulerAngles(90.f, 0.f, 0.f));
+
+	// Bishops — one on each side of the partition wall, near the side walls
+	g_theScene->CreateMeshEntity("Data/Models/LewisSet/Bishop_black", "BishopBlack", Vec3(5.5f, 2.5f, 0.1f), EulerAngles(180.f, 0.f, 0.f));
+	g_theScene->CreateMeshEntity("Data/Models/LewisSet/Bishop_white", "BishopWhite", Vec3(11.f, -2.5f, 0.1f), EulerAngles(180.f, 0.f, 0.f));
+	//g_theScene->CreateMeshEntity("Data/Models/lucy", "lucy", Vec3(12.f, 1.5f, 0.f), EulerAngles(-90.f, 0.f, 0.f));
+
+	// Interior: protruding wall from north wall at x~8.5, extending south (yaw=0)
+	// Both faces lit by left light (5.5,0) and right light (11,0)
+	g_theScene->CreateMeshEntity("Data/Models/Building/Floor02_wall", "Floor02_wall", Vec3(8.5f, 1.75f, 0.f));
+	// Perpendicular cap at the south tip (yaw=90, extends along X) — gives the wall thickness
+	g_theScene->CreateMeshEntity("Data/Models/Building/Floor02_wall", "Floor02_wall", Vec3(8.5f, 0.f, 0.f), EulerAngles(90.f, 0.f, 0.f));
 
 	g_theScene->InitializeBoundsAndMeshSDF();
-	g_theScene->UpdateCardMetadata(); //这其实就是scene的初始化流程
+	g_theScene->UpdateCardMetadata();
 }
 
 void Game::Update()
@@ -127,7 +230,88 @@ void Game::Update()
 	if (!m_isInAttractMode)
 	{
 		m_player->Update((float)s_theSystemClock->GetDeltaSeconds());
-		g_theScene->Update((float)s_theSystemClock->GetDeltaSeconds());
+
+		// Orbiting point light — smooth every-frame update
+		if (m_orbitLight)
+		{
+			m_orbitAngle += 0.5f * (float)s_theSystemClock->GetDeltaSeconds();
+			if (m_orbitAngle > 2.0f * 3.14159f)
+				m_orbitAngle -= 2.0f * 3.14159f;
+
+			Vec3 newPos = Vec3(
+				m_orbitCenter.x + m_orbitRadius * cosf(m_orbitAngle),
+				m_orbitCenter.y + m_orbitRadius * sinf(m_orbitAngle),
+				m_orbitCenter.z
+			);
+			m_orbitLight->SetPosition(newPos);
+		}
+
+		// 'T' — toggle incremental card scan test
+		if (g_theApp->WasKeyJustPressed('T'))
+		{
+			m_cardTestActive  = !m_cardTestActive;
+			m_cardTestFrame   = 0;
+			m_cardTestPrevIdx = 0;
+			DebuggerPrintf(m_cardTestActive
+				? "[CardTest] === test START (CARD_SCAN_BATCH=%d) ===\n"
+				: "[CardTest] === test STOP ===\n",
+				g_theScene->CARD_SCAN_BATCH);
+		}
+
+		if (m_cardTestActive && g_theScene)
+		{
+			Scene* sc = g_theScene;
+			bool   jobWasActive = sc->m_cardUpdateJobActive;
+			int    prevIdx      = sc->m_cardUpdateJob.objectIdx;
+			int    totalObjs    = (int)sc->m_cardUpdateJob.objectIDs.size();
+
+			auto t0 = std::chrono::high_resolution_clock::now();
+			g_theScene->Update((float)s_theSystemClock->GetDeltaSeconds());
+			long long us = std::chrono::duration_cast<std::chrono::microseconds>(
+				std::chrono::high_resolution_clock::now() - t0).count();
+
+			bool jobNowActive = sc->m_cardUpdateJobActive;
+			int  newIdx       = sc->m_cardUpdateJob.objectIdx;
+			int  advanced     = newIdx - prevIdx;
+			int  affectedCards = m_orbitLight ? m_orbitLight->GetAffectedCardCount() : -1;
+
+			// Detect if job just completed this frame
+			bool jobJustDone = jobWasActive && !jobNowActive;
+
+			DebuggerPrintf("[CardTest] f=%3d  job=%s  idx=%3d/%-3d  adv=%d  cards=%d  dt=%lld us%s\n",
+				m_cardTestFrame,
+				jobNowActive ? "RUN" : "---",
+				newIdx, totalObjs,
+				advanced,
+				affectedCards,
+				us,
+				jobJustDone ? "  << COMPLETED" : "");
+
+			// Sanity checks
+			if (jobWasActive)
+			{
+				GUARANTEE_OR_DIE(advanced <= g_theScene->CARD_SCAN_BATCH,
+					"Card scan advanced more than CARD_SCAN_BATCH in one frame!");
+			}
+			if (jobJustDone)
+			{
+				GUARANTEE_OR_DIE(affectedCards >= 0,
+					"Job completed but affectedCards not updated!");
+				DebuggerPrintf("[CardTest] Job done: %d affected cards registered.\n", affectedCards);
+			}
+
+			m_cardTestFrame++;
+			if (m_cardTestFrame >= 120)
+			{
+				m_cardTestActive = false;
+				DebuggerPrintf("[CardTest] === test END (120 frames logged) ===\n");
+			}
+		}
+		else
+		{
+			g_theScene->Update((float)s_theSystemClock->GetDeltaSeconds());
+		}
+
 		DebugRenderSystemInputUpdate();
 	}
 
@@ -199,20 +383,21 @@ void Game::Render() const
 		g_theRenderer->DrawVertexArray(m_gridVertexes);*/
 		g_theRenderer->EndCamera(((Player*)m_player)->m_worldCamera);
 
+		// ImGui panel runs BEFORE DebugRenderWorld so that per-frame debug points
+		// (e.g. point light indicators) are added in time to be drawn.
+#ifdef ENGINE_DX12_RENDERER
+		DX12Renderer* dx12Renderer = g_theRenderer->GetSubRenderer();
+		if (dx12Renderer)
+		{
+			dx12Renderer->RenderGIVisualizationImGuiPanel();
+		}
+#endif
+
 		DebugRenderWorld(((Player*)m_player)->m_worldCamera);
 		DebugRenderScreen(m_screenCamera);
 	}
 
 	g_theDevConsole->Render(AABB2(m_screenCamera.GetOrthographicBottomLeft(), m_screenCamera.GetOrthographicTopRight()), g_theRenderer);
-
-	// GI Visualization ImGui 面板
-#ifdef ENGINE_DX12_RENDERER
-	DX12Renderer* dx12Renderer = g_theRenderer->GetSubRenderer();
-	if (dx12Renderer)
-	{
-		dx12Renderer->RenderGIVisualizationImGuiPanel();
-	}
-#endif
 }
 
 void Game::AdjustForPauseAndTimeDistortion()
@@ -424,10 +609,30 @@ void Game::DebugRenderSystemInputUpdate()
 	float timeTotal = (float)m_gameClock->GetTotalSeconds();
 	float fps = (float)m_gameClock->GetFrameRate();
 	float timeScale = m_gameClock->GetTimeScale();
-	std::string timeReportHUD = " Time: " + RoundToTwoDecimalsString(timeTotal) 
+	std::string timeReportHUD = " Time: " + RoundToTwoDecimalsString(timeTotal)
 	+ " FPS: " + RoundToOneDecimalString(fps) + " Scale: " + RoundToTwoDecimalsString(timeScale);
 	float textWidth = GetTextWidth(12.f, timeReportHUD, 0.7f);
 	DebugAddScreenText(timeReportHUD, m_screenCamera.GetOrthographicTopRight() - Vec2(textWidth + 1.f, 15.f), 12.f, Vec2::ZERO, 0.f);
+
+	float frameMs = fps > 0.f ? 1000.f / fps : 999.f;
+	DebuggerPrintf("[FPS] %6.1f fps  %5.2f ms%s\n", fps, frameMs, frameMs > 20.f ? "  ***SLOW***" : "");
+
+	// Key hints (top-left)
+	float hintSize = 11.f;
+	float topY = 780.f;
+	DebugAddScreenText("Point Light: Orbiting",
+		Vec2(5.f, topY - 14.f), hintSize, Vec2::ZERO, 0.f, Rgba8::YELLOW);
+#ifdef ENGINE_DX12_RENDERER
+	bool vizOn = g_theRenderer->GetSubRenderer() && g_theRenderer->GetSubRenderer()->IsGIVisualizationEnabled();
+#else
+	bool vizOn = false;
+#endif
+	DebugAddScreenText(Stringf("[V] GI Visualization: %s", vizOn ? "ON" : "OFF"),
+		Vec2(5.f, topY - 28.f), hintSize, Vec2::ZERO, 0.f, vizOn ? Rgba8::YELLOW : Rgba8(180, 180, 180));
+	DebugAddScreenText(Stringf("[M] Mouse FPS: %s", m_mouseFPS ? "ON" : "OFF"),
+		Vec2(5.f, topY - 42.f), hintSize, Vec2::ZERO, 0.f, m_mouseFPS ? Rgba8::YELLOW : Rgba8(180, 180, 180));
+	DebugAddScreenText(Stringf("Culled: %d/%d", g_theScene->m_lastCulledCount, g_theScene->m_lastTotalCount),
+		Vec2(5.f, topY - 56.f), hintSize, Vec2::ZERO, 0.f, Rgba8(180, 220, 180));
 }
 
 void Game::DebugAddWorldAxisText(Mat44 worldMat)

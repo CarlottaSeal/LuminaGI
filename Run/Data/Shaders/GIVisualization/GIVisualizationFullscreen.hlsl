@@ -2,7 +2,7 @@
 #define VIZ_FINAL_LIGHTING              0
 #define VIZ_DIRECT_ONLY                 1
 #define VIZ_INDIRECT_ONLY               2
-// 3-7 是 Surface Cache (VS/PS)
+// 3-7: Surface Cache (VS/PS)
 #define VIZ_VOXEL_LIGHTING              8
 #define VIZ_RADIOSITY_TRACE             9
 #define VIZ_SCREEN_PROBE_BRDF_PDF       10
@@ -11,15 +11,14 @@
 #define VIZ_SCREEN_PROBE_RADIANCE_OCT   13
 #define VIZ_SCREEN_PROBE_FILTERED       14
 #define VIZ_MESH_SDF_NORMAL             15
+#define VIZ_PROBE_AO                    16
 
 cbuffer VisualizationCB : register(b0)
 {
-    // 重建 WorldPosition 矩阵
     float4x4 ClipToRenderTransform;
     float4x4 RenderToCameraTransform;
     float4x4 CameraToWorldTransform;
-    
-    // 光照参数
+
     float4x4 LightWorldToCamera;
     float4x4 LightCameraToRender;
     float4x4 LightRenderToClip;
@@ -31,40 +30,80 @@ cbuffer VisualizationCB : register(b0)
     float3 AmbientColor;
     float AmbientIntensity;
     
-    // 可视化参数
     uint g_Mode;
     float g_Exposure;
     uint g_ScreenWidth;
     uint g_ScreenHeight;
     
-    // Screen Probe 参数
     uint g_ProbeGridWidth;
     uint g_ProbeGridHeight;
     uint g_ProbeSpacing;
     uint g_OctahedronSize;
-    
+
+    uint g_OctahedronWidth;
+    uint g_OctahedronHeight;
+    uint g_Padding5;
+    uint g_Padding6;
+
     float g_DirectIntensity;
     float g_IndirectIntensity;
     float g_AOStrength;
     float g_Padding0;
     
-    // Voxel 参数
     float3 g_VoxelGridMin;
     float g_VoxelSize;
     float3 g_VoxelGridMax;
     uint g_VoxelResolution;
     
-    // Global SDF 参数
     float3 g_GlobalSDFCenter;
     float g_GlobalSDFExtent;
     float3 g_GlobalSDFInvExtent;
     uint g_GlobalSDFResolution;
     
-    // Radiosity 参数
     uint g_RadiosityProbeGridWidth;
     uint g_RadiosityProbeGridHeight;
     uint g_AtlasWidth;
     uint g_AtlasHeight;
+};
+
+struct Light
+{
+    float4 Color;           // rgb = color, a = intensity
+    float3 WorldPosition;
+    float PADDING;
+    float3 SpotForward;
+    float Ambience;
+    float InnerRadius;
+    float OuterRadius;
+    float InnerDotThreshold;
+    float OuterDotThreshold;
+};
+
+cbuffer GeneralLightConstants : register(b4)
+{
+    float4 g_SunColorAlt;
+    float3 g_SunNormalAlt;
+    int g_NumLights;
+    Light g_LightsArray[15];
+};
+
+cbuffer ShadowConstantsB5 : register(b5)
+{
+    float4x4 SC_LightWorldToCamera;
+    float4x4 SC_LightCameraToRender;
+    float4x4 SC_LightRenderToClip;
+    float SC_ShadowMapSize;
+    float SC_ShadowBias;
+    float SC_SoftnessFactor;
+    float SC_LightSize;
+    float3 SC_LightPosition;
+    float SC_FarPlane;
+    int4 ShadowLightIndices;
+    float4 ShadowFarPlanes;
+    float PointShadowBias;
+    float PointShadowSoftness;
+    int NumShadowCastingLights;
+    float PLShadowPadding;
 };
 
 Texture2D<float4> g_GBufferAlbedo   : register(t214);
@@ -74,17 +113,17 @@ Texture2D<float4> g_GBufferMotion   : register(t217);
 Texture2D<float>  g_DepthBuffer     : register(t218);
 
 Texture2D<float> g_ShadowMap : register(t384);
+TextureCubeArray<float> g_PointLightShadowMaps : register(t435);
 
 Texture2D<float4> g_ScreenIndirectLighting : register(t430);
 
-// Voxel & SDF (使用实际的 descriptor slot)
+// Voxel & SDF
 Texture3D<float>  g_GlobalSDF       : register(t378);
 Texture3D<float4> g_VoxelLighting   : register(t379);
 
 Texture2D<float4> g_RadiosityTraceResult : register(t393);
 
-// Screen Probe 资源 (使用实际的 descriptor slot)
-// BRDF_PDF 和 LightingPDF 是 StructuredBuffer<SH2CoeffsGPU>
+// Screen Probe resources
 struct SH2CoeffsGPU
 {
     float R[4];
@@ -94,7 +133,7 @@ struct SH2CoeffsGPU
 StructuredBuffer<SH2CoeffsGPU> g_ScreenProbeBRDF_PDF    : register(t417);
 StructuredBuffer<SH2CoeffsGPU> g_ScreenProbeLightingPDF : register(t418);
 
-// MeshTrace 是 StructuredBuffer<MeshTraceResult>
+// MeshTrace result
 struct MeshTraceResult
 {
     float3 HitPosition;
@@ -161,7 +200,6 @@ float3 Heatmap(float t)
 
 float SampleShadowPCF(float3 worldPos, float3 normal)
 {
-    // 矩阵乘法顺序：RenderToClip * CameraToRender * WorldToCamera
     float4x4 lightViewProj = mul(LightRenderToClip, mul(LightCameraToRender, LightWorldToCamera));
     float4 lightClipPos = mul(lightViewProj, float4(worldPos, 1.0));
     lightClipPos.xyz /= lightClipPos.w;
@@ -172,21 +210,151 @@ float SampleShadowPCF(float3 worldPos, float3 normal)
     if (shadowUV.x < 0 || shadowUV.x > 1 || shadowUV.y < 0 || shadowUV.y > 1)
         return 1.0;
 
-    // 使用与Composite相同的bias
     float receiverDepth = lightClipPos.z;
     float bias = 0.005;
     receiverDepth -= bias;
 
-    // 单次采样（与Composite一致）
     return g_ShadowMap.SampleCmpLevelZero(g_ShadowSampler, shadowUV, receiverDepth);
 }
 
-float3 CalculateDirectLighting(float3 worldPos, float3 normal, float3 albedo, float shadow)
+float VizRangeMap(float value, float inMin, float inMax, float outMin, float outMax)
 {
-    float NdotL = saturate(dot(normal, -SunNormal));
-    float3 sunLight = SunColor.rgb * SunColor.a * NdotL * shadow;
-    float3 ambient = AmbientColor * AmbientIntensity;
-    return albedo * (sunLight + ambient);
+    return outMin + (value - inMin) * (outMax - outMin) / (inMax - inMin);
+}
+
+float VizSmoothStep3(float t)
+{
+    return t * t * (3.0 - 2.0 * t);
+}
+
+int GetShadowSlotForLight(int lightIndex)
+{
+    [unroll]
+    for (int s = 0; s < 4; s++)
+    {
+        if (s >= NumShadowCastingLights) break;
+        if (ShadowLightIndices[s] == lightIndex) return s;
+    }
+    return -1;
+}
+
+float SamplePointShadow(int shadowSlot, float3 worldPos, float3 lightPos)
+{
+    float3 lightToPixel = worldPos - lightPos;
+    float currentDist = length(lightToPixel);
+    float3 dir = lightToPixel / currentDist;
+    float currentDepth = currentDist / ShadowFarPlanes[shadowSlot];
+
+    float3 tangent = normalize(cross(dir, float3(0.0, 1.0, 0.001)));
+    float3 bitangent = cross(dir, tangent);
+
+    float diskRadius = PointShadowSoftness;
+    float shadow = 0.0;
+    const int NUM_SAMPLES = 16;
+
+    static const float2 poissonDisk[16] =
+    {
+        float2(-0.94201624, -0.39906216), float2(0.94558609, -0.76890725),
+        float2(-0.09418410, -0.92938870), float2(0.34495938,  0.29387760),
+        float2(-0.91588581,  0.45771432), float2(-0.81544232, -0.87912464),
+        float2(-0.38277543,  0.27676845), float2(0.97484398,  0.75648379),
+        float2(0.44323325, -0.97511554), float2(0.53742981, -0.47373420),
+        float2(-0.26496911, -0.41893023), float2(0.79197514,  0.19090188),
+        float2(-0.24188840,  0.99706507), float2(-0.81409955,  0.91437590),
+        float2(0.19984126,  0.78641367), float2(0.14383161, -0.14100790)
+    };
+
+    [unroll]
+    for (int i = 0; i < NUM_SAMPLES; i++)
+    {
+        float3 offset = (tangent * poissonDisk[i].x + bitangent * poissonDisk[i].y) * diskRadius;
+        float3 sampleDir = normalize(dir + offset);
+        float stored = g_PointLightShadowMaps.SampleLevel(g_PointSampler, float4(sampleDir, (float)shadowSlot), 0).r;
+        shadow += (currentDepth - PointShadowBias > stored) ? 0.0 : 1.0;
+    }
+    return shadow / (float)NUM_SAMPLES;
+}
+
+float3 CalculateDirectLighting(float3 worldPos, float3 normal, float3 albedo, float shadow,
+                                float3 viewDir, float roughness, float metallic)
+{
+    float smoothness = 1.0 - roughness;
+    float specPower = pow(2.0, smoothness * 12.0);
+    float normFactor = (specPower + 8.0) / 25.132;
+    float3 F0 = lerp(float3(0.04, 0.04, 0.04), albedo, metallic);
+
+    float3 totalDiffuse = float3(0, 0, 0);
+    float3 totalSpecular = float3(0, 0, 0);
+
+    // === Sun ===
+    float3 L = -SunNormal;
+    float NdotL_sun = saturate(dot(normal, L));
+    float3 sunRadiance = SunColor.rgb * SunColor.a * shadow;
+    totalDiffuse += sunRadiance * NdotL_sun;
+
+    float3 H_sun = normalize(L + viewDir);
+    float NdotH_sun = saturate(dot(normal, H_sun));
+    float VdotH_sun = saturate(dot(viewDir, H_sun));
+    float specIntensity_sun = pow(NdotH_sun, specPower) * normFactor * NdotL_sun;
+    float3 fresnel_sun = F0 + (1.0 - F0) * pow(1.0 - VdotH_sun, 5.0);
+    totalSpecular += fresnel_sun * specIntensity_sun * sunRadiance;
+
+    // === Ambient ===
+    totalDiffuse += AmbientColor * AmbientIntensity;
+
+    // === Point/Spot lights ===
+    for (int i = 0; i < g_NumLights; i++)
+    {
+        Light light = g_LightsArray[i];
+        float3 lightPos = light.WorldPosition;
+        float3 lightColor = light.Color.rgb;
+        float lightBrightness = light.Color.a;
+        float innerRadius = light.InnerRadius;
+        float outerRadius = light.OuterRadius;
+        float ambience = light.Ambience;
+
+        float3 pixelToLightDisp = lightPos - worldPos;
+        float3 pixelToLightDir = normalize(pixelToLightDisp);
+        float3 lightToPixelDir = -pixelToLightDir;
+        float distToLight = length(pixelToLightDisp);
+
+        float falloff = saturate(VizRangeMap(distToLight, innerRadius, outerRadius, 1.0, 0.0));
+        falloff = VizSmoothStep3(falloff);
+
+        float penumbra = 1.0;
+        if (length(light.SpotForward) > 0.01)
+        {
+            penumbra = saturate(VizRangeMap(
+                dot(light.SpotForward, lightToPixelDir),
+                light.OuterDotThreshold, light.InnerDotThreshold, 0.0, 1.0));
+            penumbra = VizSmoothStep3(penumbra);
+        }
+
+        float pointNdotL = saturate(dot(pixelToLightDir, normal));
+        float attenuation = penumbra * falloff * lightBrightness;
+
+        float pointShadow = 1.0;
+        int shadowSlot = GetShadowSlotForLight(i);
+        if (shadowSlot >= 0)
+            pointShadow = SamplePointShadow(shadowSlot, worldPos, lightPos);
+
+        float diffuseFactor = saturate(VizRangeMap(dot(pixelToLightDir, normal), -ambience, 1.0, 0.0, 1.0));
+        float3 lightRadiance = attenuation * lightColor * pointShadow;
+        totalDiffuse += lightRadiance * diffuseFactor;
+
+        if (pointNdotL > 0.001)
+        {
+            float3 H = normalize(pixelToLightDir + viewDir);
+            float NdotH = saturate(dot(normal, H));
+            float VdotH = saturate(dot(viewDir, H));
+            float specIntensity = pow(NdotH, specPower) * normFactor * pointNdotL;
+            float3 fresnel = F0 + (1.0 - F0) * pow(1.0 - VdotH, 5.0);
+            totalSpecular += fresnel * specIntensity * lightRadiance;
+        }
+    }
+
+    float3 diffuseColor = albedo * (1.0 - metallic);
+    return diffuseColor * totalDiffuse + totalSpecular;
 }
 
 float3 GetSkyColor(float3 viewDir)
@@ -197,16 +365,108 @@ float3 GetSkyColor(float3 viewDir)
     return lerp(horizonColor, zenithColor, skyFactor);
 }
 
-// 计算 Screen Probe Atlas 坐标
+// Standard octahedron encoding (must match GenerateSampleDirections/ScreenProbeCommon)
+float2 DirectionToOctahedronUV(float3 dir)
+{
+    dir = normalize(dir);
+    float3 n = dir / (abs(dir.x) + abs(dir.y) + abs(dir.z));
+
+    if (n.z < 0.0f)
+    {
+        float2 sign_xy = float2(n.x >= 0.0f ? 1.0f : -1.0f, n.y >= 0.0f ? 1.0f : -1.0f);
+        n.xy = (1.0f - abs(n.yx)) * sign_xy;
+    }
+
+    return n.xy * 0.5f + 0.5f;
+}
+
+// SimLumen style probe sampling (same as FinalGather)
+float3 GetScreenProbeIrradianceViz(Texture2D<float4> probeTexture, uint2 probeCoord, float2 probeUV)
+{
+    if (probeCoord.x >= g_ProbeGridWidth || probeCoord.y >= g_ProbeGridHeight)
+        return float3(0, 0, 0);
+
+    // 8x16 per probe layout
+    uint raysTexWidth = g_ProbeGridWidth * g_OctahedronWidth;
+    uint raysTexHeight = g_ProbeGridHeight * g_OctahedronHeight;
+
+    float2 probeSize = float2(g_OctahedronWidth, g_OctahedronHeight);
+    float2 subPos = probeUV * (probeSize - 1.0f) + 1.0f;
+    float2 texelUV = (float2(probeCoord) * probeSize + subPos) / float2(raysTexWidth, raysTexHeight);
+
+    float3 result = probeTexture.SampleLevel(g_LinearSampler, texelUV, 0).rgb;
+
+    float lum = max(max(result.r, result.g), result.b);
+    const float MAX_LUM = 2.0f;
+    if (lum > MAX_LUM)
+        result *= MAX_LUM / lum;
+
+    return result;
+}
+
+// FinalGather style: 5-probe averaging with material processing
+float3 ComputeFinalGatherStyle(Texture2D<float4> probeTexture, uint2 pixelCoord, float3 worldNormal, float3 albedo, float metallic)
+{
+    float2 probeUV = DirectionToOctahedronUV(worldNormal);
+    uint2 probeCoord = pixelCoord / g_ProbeSpacing;
+
+    int2 offsets[5] = {
+        int2(0, 0),
+        int2(0, 1),
+        int2(0, -1),
+        int2(1, 0),
+        int2(-1, 0),
+    };
+
+    float3 totalRadiance = float3(0, 0, 0);
+    float validCount = 0.0f;
+
+    [unroll]
+    for (uint i = 0; i < 5; i++)
+    {
+        int2 pc = int2(probeCoord) + offsets[i];
+
+        if (pc.x >= 0 && pc.x < (int)g_ProbeGridWidth &&
+            pc.y >= 0 && pc.y < (int)g_ProbeGridHeight)
+        {
+            float3 probeRad = GetScreenProbeIrradianceViz(probeTexture, uint2(pc), probeUV);
+            totalRadiance += probeRad;
+            validCount += 1.0f;
+        }
+    }
+
+    float3 diffuseIrradiance = float3(0, 0, 0);
+    if (validCount > 0.5f)
+    {
+        diffuseIrradiance = totalRadiance / validCount / 3.14159265359f;
+    }
+
+    // SimLumen: c_diff = albedo * (1 - metallic)
+    float3 c_diff = albedo * (1.0f - metallic);
+    float3 indirectLight = c_diff * diffuseIrradiance * g_IndirectIntensity;
+
+    float indirectLum = max(max(indirectLight.r, indirectLight.g), indirectLight.b);
+    const float MAX_INDIRECT = 1.0f;
+    if (indirectLum > MAX_INDIRECT)
+        indirectLight *= MAX_INDIRECT / indirectLum;
+
+    if (any(isnan(indirectLight)) || any(isinf(indirectLight)))
+        indirectLight = float3(0, 0, 0);
+
+    return indirectLight;
+}
+
 uint2 GetProbeAtlasCoord(uint2 pixelCoord)
 {
     uint2 probeCoord = pixelCoord / g_ProbeSpacing;
     probeCoord = min(probeCoord, uint2(g_ProbeGridWidth - 1, g_ProbeGridHeight - 1));
-    uint2 localOffset = (pixelCoord % g_ProbeSpacing) * g_OctahedronSize / g_ProbeSpacing;
-    return probeCoord * g_OctahedronSize + localOffset;
+    // 8x16 per probe layout
+    uint2 probeSize = uint2(g_OctahedronWidth, g_OctahedronHeight);
+    uint2 localOffset = (pixelCoord % g_ProbeSpacing) * probeSize / g_ProbeSpacing;
+    return probeCoord * probeSize + localOffset;
 }
 
-// SDF 采样
+// SDF sampling
 float3 WorldToSdfUV(float3 worldPos)
 {
     float3 sdfMin = g_GlobalSDFCenter - float3(g_GlobalSDFExtent, g_GlobalSDFExtent, g_GlobalSDFExtent);
@@ -224,11 +484,10 @@ float SampleSDF(float3 worldPos)
 
 float3 CalculateSDFNormal(float3 worldPos)
 {
-    // 保护：确保 resolution 有效
     uint resolution = max(g_GlobalSDFResolution, 64u);
     float eps = g_GlobalSDFExtent / float(resolution) * 2.0;
-    eps = max(eps, 0.01);  // 最小 epsilon
-    
+    eps = max(eps, 0.01);
+
     float dx = SampleSDF(worldPos + float3(eps, 0, 0)) - SampleSDF(worldPos - float3(eps, 0, 0));
     float dy = SampleSDF(worldPos + float3(0, eps, 0)) - SampleSDF(worldPos - float3(0, eps, 0));
     float dz = SampleSDF(worldPos + float3(0, 0, eps)) - SampleSDF(worldPos - float3(0, 0, eps));
@@ -236,34 +495,23 @@ float3 CalculateSDFNormal(float3 worldPos)
     float3 gradient = float3(dx, dy, dz);
     float len = length(gradient);
     
-    // 如果梯度太小，返回默认法线
     if (len < 0.0001)
-        return float3(0, 1, 0);  // 默认向上
+        return float3(0, 1, 0);
     
     return gradient / len;
 }
 
-// 从相机矩阵获取相机世界位置
 float3 GetCameraPosition()
 {
-    // CameraToWorldTransform 将相机空间原点(0,0,0,1)变换到世界空间
-    // 尝试两种方式，根据矩阵布局选择正确的
-    // 方式1：行主矩阵，位置在最后一行
-    // return float3(CameraToWorldTransform[3][0], CameraToWorldTransform[3][1], CameraToWorldTransform[3][2]);
-    // 方式2：列主矩阵，位置在最后一列
     return float3(CameraToWorldTransform[0][3], CameraToWorldTransform[1][3], CameraToWorldTransform[2][3]);
 }
 
-// 计算屏幕像素对应的视线方向
 float3 GetViewRayDirection(float2 uv)
 {
-    // 使用近平面和远平面两点计算射线方向
     float4 clipNear = float4(uv * 2.0 - 1.0, 0.0, 1.0);
     float4 clipFar = float4(uv * 2.0 - 1.0, 1.0, 1.0);
     clipNear.y = -clipNear.y;
     clipFar.y = -clipFar.y;
-    
-    // 变换到世界空间
     float4 renderNear = mul(ClipToRenderTransform, clipNear);
     float4 cameraNear = mul(RenderToCameraTransform, renderNear);
     float4 worldNear = mul(CameraToWorldTransform, cameraNear);
@@ -277,13 +525,12 @@ float3 GetViewRayDirection(float2 uv)
     return normalize(worldFar.xyz - worldNear.xyz);
 }
 
-// SimLumen 风格：Ray March Global SDF
+// SimLumen style: Ray March Global SDF
 bool TraceGlobalSDF(float3 rayOrigin, float3 rayDir, float maxDist, out float hitDist, out float3 hitNormal)
 {
     hitDist = maxDist;
     hitNormal = float3(0, 0, 1);
     
-    // 保护：确保 resolution 有效
     uint resolution = max(g_GlobalSDFResolution, 64u);
     float voxelSize = g_GlobalSDFExtent * 2.0 / float(resolution);
     float hitThreshold = voxelSize * 0.5;
@@ -299,7 +546,6 @@ bool TraceGlobalSDF(float3 rayOrigin, float3 rayDir, float maxDist, out float hi
         float3 pos = rayOrigin + rayDir * t;
         float dist = SampleSDF(pos);
         
-        // 如果在 SDF 体积外，快速步进
         if (dist > 100.0)
         {
             t += voxelSize * 4.0;
@@ -319,26 +565,25 @@ bool TraceGlobalSDF(float3 rayOrigin, float3 rayDir, float maxDist, out float hi
     return false;
 }
 
-// SimLumen 风格法线着色
+// SimLumen style normal coloring
 float3 SimLumenNormalColor(float3 n)
 {
     if (n.x > 0.5)
-        return float3(1.0, 0.0, 0.0);      // +X 红
+        return float3(1.0, 0.0, 0.0);      // +X
     else if (n.x < -0.5)
-        return float3(0.2, 0.0, 0.0);      // -X 暗红
+        return float3(0.2, 0.0, 0.0);      // -X
     else if (n.y > 0.5)
-        return float3(0.0, 1.0, 0.0);      // +Y 绿
+        return float3(0.0, 1.0, 0.0);      // +Y
     else if (n.y < -0.5)
-        return float3(0.0, 0.2, 0.0);      // -Y 暗绿
+        return float3(0.0, 0.2, 0.0);      // -Y
     else if (n.z > 0.5)
-        return float3(0.0, 0.0, 1.0);      // +Z 蓝
+        return float3(0.0, 0.0, 1.0);      // +Z
     else if (n.z < -0.5)
-        return float3(0.0, 0.0, 0.2);      // -Z 暗蓝
+        return float3(0.0, 0.0, 0.2);      // -Z
     else
         return normalize(n) * 0.5 + 0.5;
 }
 
-// 法线方向着色
 float3 NormalToColor(float3 n)
 {
     float3 absN = abs(n);
@@ -350,8 +595,7 @@ float3 NormalToColor(float3 n)
         return n.z > 0 ? float3(0.2, 0.2, 1.0) : float3(0.1, 0.1, 0.5);
 }
 
-// SH2 (L0 + L1) 评估 - 4个系数
-// Y00 = 0.282095 (常数项)
+// SH2 (L0 + L1) evaluation - 4 coefficients
 // Y1-1 = 0.488603 * y
 // Y10 = 0.488603 * z
 // Y11 = 0.488603 * x
@@ -375,10 +619,8 @@ float3 EvaluateSH2RGB(SH2CoeffsGPU sh, float3 dir)
     );
 }
 
-// 计算 SH2 总能量（用于可视化PDF分布）
 float GetSH2Energy(float coeffs[4])
 {
-    // L0 能量 + L1 能量的近似
     return abs(coeffs[0]) + (abs(coeffs[1]) + abs(coeffs[2]) + abs(coeffs[3])) * 0.5f;
 }
 
@@ -398,13 +640,16 @@ void CSMain(uint3 dispatchID : SV_DispatchThreadID)
     float3 result = float3(0, 0, 0);
     bool isSky = (depth >= 0.9999);
     
-    // 读取 GBuffer
     float3 albedo = g_GBufferAlbedo[pixelCoord].rgb;
     float3 worldNormal = DecodeNormal(g_GBufferNormal[pixelCoord].rgb);
     float4 materialData = g_GBufferMaterial[pixelCoord];
+    float roughness = materialData.r;
     float metallic = materialData.g;
     float ao = materialData.b;
     float3 worldPos = ReconstructWorldPosition(uv, depth);
+
+    float3 cameraPos = GetCameraPosition();
+    float3 viewDir = normalize(cameraPos - worldPos);
     
     switch (g_Mode)
     {
@@ -420,15 +665,12 @@ void CSMain(uint3 dispatchID : SV_DispatchThreadID)
             else
             {
                 float shadow = SampleShadowPCF(worldPos, worldNormal);
-                float3 directLighting = CalculateDirectLighting(worldPos, worldNormal, albedo, shadow);
+                float3 directLighting = CalculateDirectLighting(worldPos, worldNormal, albedo, shadow,
+                                                                 viewDir, roughness, metallic);
                 directLighting *= g_DirectIntensity;
-                
+
                 float3 indirectLighting = g_ScreenIndirectLighting[pixelCoord].rgb;
-                indirectLighting *= g_IndirectIntensity;
-                indirectLighting *= lerp(1.0, ao, g_AOStrength);
-                float3 diffuseColor = albedo * (1.0 - metallic);
-                indirectLighting *= diffuseColor;
-                
+
                 result = directLighting + indirectLighting;
                 result = ToneMapACES(result);
                 result = pow(saturate(result), 1.0 / 2.2);
@@ -445,7 +687,8 @@ void CSMain(uint3 dispatchID : SV_DispatchThreadID)
             else
             {
                 float shadow = SampleShadowPCF(worldPos, worldNormal);
-                result = CalculateDirectLighting(worldPos, worldNormal, albedo, shadow);
+                result = CalculateDirectLighting(worldPos, worldNormal, albedo, shadow,
+                                                  viewDir, roughness, metallic);
                 result *= g_DirectIntensity;
                 result = ToneMapACES(result);
                 result = pow(saturate(result), 1.0 / 2.2);
@@ -462,10 +705,7 @@ void CSMain(uint3 dispatchID : SV_DispatchThreadID)
             else
             {
                 float3 indirectLighting = g_ScreenIndirectLighting[pixelCoord].rgb;
-                indirectLighting *= g_IndirectIntensity;
-                indirectLighting *= lerp(1.0, ao, g_AOStrength);
-                float3 diffuseColor = albedo * (1.0 - metallic);
-                result = indirectLighting * diffuseColor;
+                result = indirectLighting;
                 result = ToneMapACES(result);
                 result = pow(saturate(result), 1.0 / 2.2);
             }
@@ -474,7 +714,6 @@ void CSMain(uint3 dispatchID : SV_DispatchThreadID)
         
         //=================================================================
         // Voxel Lighting (8)
-        // 在 GBuffer 表面位置采样 Voxel Lighting 贴到场景上
         //=================================================================
         case VIZ_VOXEL_LIGHTING:
         {
@@ -484,12 +723,10 @@ void CSMain(uint3 dispatchID : SV_DispatchThreadID)
                 break;
             }
 
-            // 计算 Voxel UV - 使用 VoxelGrid 参数
             float3 voxelMin = g_VoxelGridMin;
             float3 voxelMax = g_VoxelGridMax;
             float3 gridSize = voxelMax - voxelMin;
 
-            // 如果 VoxelGrid 参数无效，使用 GlobalSDF 范围作为 fallback
             if (length(gridSize) < 1.0)
             {
                 voxelMin = g_GlobalSDFCenter - g_GlobalSDFExtent;
@@ -497,7 +734,6 @@ void CSMain(uint3 dispatchID : SV_DispatchThreadID)
                 gridSize = voxelMax - voxelMin;
             }
 
-            // 在 GBuffer 世界坐标处采样 VoxelLighting
             float3 voxelUV = (worldPos - voxelMin) / gridSize;
 
             if (all(voxelUV >= 0.0) && all(voxelUV <= 1.0))
@@ -505,13 +741,11 @@ void CSMain(uint3 dispatchID : SV_DispatchThreadID)
                 float4 voxelData = g_VoxelLighting.SampleLevel(g_LinearSampler, voxelUV, 0);
                 result = voxelData.rgb;
 
-                // Tone mapping 和 gamma 校正
                 result = ToneMapACES(result);
                 result = pow(saturate(result), 1.0 / 2.2);
             }
             else
             {
-                // 超出体素范围 - 显示暗红色边界指示
                 result = float3(0.15, 0.0, 0.0);
             }
             break;
@@ -519,8 +753,6 @@ void CSMain(uint3 dispatchID : SV_DispatchThreadID)
         
         //=================================================================
         // Radiosity Trace Result (9)
-        // RadiosityTraceResult 是 SurfaceCache 上的 ProbeGrid (1024x1024)
-        // 直接显示纹理内容，用屏幕UV采样
         //=================================================================
         case VIZ_RADIOSITY_TRACE:
         {
@@ -530,46 +762,37 @@ void CSMain(uint3 dispatchID : SV_DispatchThreadID)
                 break;
             }
 
-            // 直接用屏幕UV采样RadiosityTraceResult纹理
-            // 这样可以看到整个ProbeGrid的间接光照分布
-
             uint probeGridW = g_RadiosityProbeGridWidth;
             uint probeGridH = g_RadiosityProbeGridHeight;
 
-            // 如果参数未设置，使用默认值
             if (probeGridW == 0) probeGridW = 1024;
             if (probeGridH == 0) probeGridH = 1024;
 
-            // 用屏幕UV直接采样ProbeGrid
             float2 probeUV = float2(pixelCoord) / float2(g_ScreenWidth, g_ScreenHeight);
             uint2 probeCoord = uint2(probeUV * float2(probeGridW, probeGridH));
             probeCoord = min(probeCoord, uint2(probeGridW - 1, probeGridH - 1));
 
-            // 采样RadiosityTraceResult
             float4 radData = g_RadiosityTraceResult.Load(int3(probeCoord, 0));
 
             if (radData.w > 0.01f)
             {
-                // 有效数据 - 显示间接光照
                 result = radData.rgb;
                 result = ToneMapACES(result);
                 result = pow(saturate(result), 1.0 / 2.2);
             }
             else if (length(radData.rgb) > 0.001f)
             {
-                // 有颜色但validity低 - 稍暗显示
                 result = radData.rgb * 0.5;
                 result = ToneMapACES(result);
                 result = pow(saturate(result), 1.0 / 2.2);
             }
             else
             {
-                // 空数据 - 纯黑
                 result = float3(0, 0, 0);
             }
             break;
         }
-        
+
         //=================================================================
         // Screen Probe Modes (10-14)
         //=================================================================
@@ -581,34 +804,27 @@ void CSMain(uint3 dispatchID : SV_DispatchThreadID)
             }
             else
             {
-                // 计算当前像素所属的 probe 索引
                 uint2 probeCoord = pixelCoord / g_ProbeSpacing;
                 probeCoord = min(probeCoord, uint2(g_ProbeGridWidth - 1, g_ProbeGridHeight - 1));
                 uint probeIndex = probeCoord.y * g_ProbeGridWidth + probeCoord.x;
 
-                // 读取 SH 系数
                 SH2CoeffsGPU brdfSH = g_ScreenProbeBRDF_PDF[probeIndex];
 
-                // 计算总能量用于热力图显示
                 float energy = GetSH2Energy(brdfSH.R) + GetSH2Energy(brdfSH.G) + GetSH2Energy(brdfSH.B);
-                energy /= 3.0f;  // 归一化
+                energy /= 3.0f;
 
                 if (energy > 0.001f)
                 {
-                    // 在表面法线方向评估 BRDF PDF
                     float3 evalDir = worldNormal;
                     float3 shValue = EvaluateSH2RGB(brdfSH, evalDir);
 
-                    // 显示热力图（基于能量）和方向值
                     float heatValue = saturate(energy * 2.0f);
                     float3 heatColor = Heatmap(heatValue);
 
-                    // 混合：热力图显示能量，实际值调制颜色
                     result = heatColor * max(0.3f, saturate(length(shValue)));
                 }
                 else
                 {
-                    // 没有数据 - 显示暗灰色
                     result = float3(0.05, 0.05, 0.05);
                 }
             }
@@ -623,35 +839,28 @@ void CSMain(uint3 dispatchID : SV_DispatchThreadID)
             }
             else
             {
-                // 计算当前像素所属的 probe 索引
                 uint2 probeCoord = pixelCoord / g_ProbeSpacing;
                 probeCoord = min(probeCoord, uint2(g_ProbeGridWidth - 1, g_ProbeGridHeight - 1));
                 uint probeIndex = probeCoord.y * g_ProbeGridWidth + probeCoord.x;
 
-                // 读取 Lighting PDF SH 系数
                 SH2CoeffsGPU lightingSH = g_ScreenProbeLightingPDF[probeIndex];
 
-                // 计算总能量用于热力图显示
                 float energy = GetSH2Energy(lightingSH.R) + GetSH2Energy(lightingSH.G) + GetSH2Energy(lightingSH.B);
-                energy /= 3.0f;  // 归一化
+                energy /= 3.0f;
 
                 if (energy > 0.001f)
                 {
-                    // 在太阳光方向评估 Lighting PDF（显示主光源方向的贡献）
-                    float3 evalDir = -normalize(SunNormal);  // 朝向光源的方向
+                    float3 evalDir = -normalize(SunNormal);
                     float3 shValue = EvaluateSH2RGB(lightingSH, evalDir);
 
-                    // 显示热力图（基于能量）
                     float heatValue = saturate(energy * 2.0f);
                     float3 heatColor = Heatmap(heatValue);
 
-                    // 也可以直接显示 SH 在光源方向的评估值
                     float3 lightingValue = max(float3(0, 0, 0), shValue);
                     result = lerp(heatColor, lightingValue, 0.5f);
                 }
                 else
                 {
-                    // 没有数据 - 显示暗灰色
                     result = float3(0.05, 0.05, 0.05);
                 }
             }
@@ -660,21 +869,16 @@ void CSMain(uint3 dispatchID : SV_DispatchThreadID)
         
         case VIZ_SCREEN_PROBE_MESH_SDF_TRACE:
         {
-            // 显示 MeshSDFTrace Pass 的实际追踪结果
-            // 综合显示: 命中法线(颜色) + 命中距离(亮度) + 命中率(饱和度)
-
             if (isSky)
             {
                 result = float3(0, 0, 0);
                 break;
             }
 
-            // 计算当前像素对应的 Probe
             uint2 probeCoord = pixelCoord / g_ProbeSpacing;
             probeCoord = min(probeCoord, uint2(g_ProbeGridWidth - 1, g_ProbeGridHeight - 1));
             uint probeIndex = probeCoord.y * g_ProbeGridWidth + probeCoord.x;
 
-            // 统计该 Probe 所有射线的命中情况
             uint hitCount = 0;
             float avgDistance = 0;
             float3 avgNormal = float3(0, 0, 0);
@@ -703,22 +907,15 @@ void CSMain(uint3 dispatchID : SV_DispatchThreadID)
                 avgDistance /= float(hitCount);
                 avgNormal = normalize(avgNormal);
 
-                // 计算各项指标
                 float hitRate = float(hitCount) / float(raysPerProbe);
                 float normalizedDist = saturate(avgDistance / meshTraceMaxDist);
 
-                // === 综合可视化方案 ===
-                // 1. 法线着色 (SimLumen 风格 - 主要信息)
                 float3 normalColor = SimLumenNormalColor(avgNormal);
-
-                // 2. 距离热力图 (近=红/黄, 远=蓝/青)
                 float3 distColor = Heatmap(1.0 - normalizedDist);
 
-                // 3. 混合: 法线70% + 距离30%, 命中率影响整体亮度
                 result = normalColor * 0.7 + distColor * 0.3;
-                result *= (0.4 + hitRate * 0.6); // 命中率越高越亮
+                result *= (0.4 + hitRate * 0.6);
 
-                // 4. 低命中率区域加紫色警告
                 if (hitRate < 0.15)
                 {
                     result = lerp(result, float3(0.4, 0.0, 0.4), 0.5);
@@ -726,7 +923,6 @@ void CSMain(uint3 dispatchID : SV_DispatchThreadID)
             }
             else
             {
-                // 完全没有命中 - 纯黑
                 result = float3(0, 0, 0);
             }
             break;
@@ -734,13 +930,10 @@ void CSMain(uint3 dispatchID : SV_DispatchThreadID)
         
         case VIZ_SCREEN_PROBE_RADIANCE_OCT:
         {
-            if (isSky)
-            {
-                result = float3(0, 0, 0);
-                break;
-            }
-            uint2 atlasCoord = GetProbeAtlasCoord(pixelCoord);
-            result = g_ScreenProbeRadiance[atlasCoord].rgb;
+            // Raw probe radiance texture (same layout as PIX)
+            float3 raw = g_ScreenProbeRadiance[pixelCoord].rgb;
+            result = ToneMapACES(raw);
+            result = pow(saturate(result), 1.0 / 2.2);
             break;
         }
 
@@ -751,8 +944,10 @@ void CSMain(uint3 dispatchID : SV_DispatchThreadID)
                 result = float3(0, 0, 0);
                 break;
             }
-            uint2 atlasCoord = GetProbeAtlasCoord(pixelCoord);
-            result = g_ScreenProbeFiltered[atlasCoord].rgb;
+            // FinalGather style: 5-probe average + c_diff + IndirectIntensity
+            result = ComputeFinalGatherStyle(g_ScreenProbeFiltered, pixelCoord, worldNormal, albedo, metallic);
+            result = ToneMapACES(result);
+            result = pow(saturate(result), 1.0 / 2.2);
             break;
         }
         
@@ -783,8 +978,18 @@ void CSMain(uint3 dispatchID : SV_DispatchThreadID)
             break;
         }
         
+        case VIZ_PROBE_AO:
+        {
+            if (!isSky)
+            {
+                float ao = g_ScreenIndirectLighting[pixelCoord].a;
+                result = float3(ao, ao, ao);
+            }
+            break;
+        }
+
         default:
-            result = float3(1, 0, 1);  // Magenta = 未知模式
+            result = float3(1, 0, 1);  // Magenta = unknown mode
             break;
     }
     

@@ -1,12 +1,3 @@
-// Point Light Cube Shadow Map Shader
-// 输出线性深度 (distance / farPlane) 而非透视深度
-
-cbuffer ModelConstants : register(b2)
-{
-    float4x4 ModelToWorldTransform;
-    float4 ModelColor;
-};
-
 cbuffer ShadowConstants : register(b5)
 {
     float4x4 LightWorldToCamera;
@@ -16,14 +7,32 @@ cbuffer ShadowConstants : register(b5)
     float ShadowBias;
     float SoftnessFactor;
     float LightSize;
-    // 点光源阴影额外数据
     float3 LightPosition;
     float FarPlane;
+    int4 ShadowLightIndices;
+    float4 ShadowFarPlanes;
+    float PointShadowBias;
+    float PointShadowSoftness;
+    int NumShadowCastingLights;
+    float PLShadowPadding;
 };
+
+cbuffer DrawConstants : register(b21)
+{
+    uint InstanceOffset;
+};
+
+struct InstanceData
+{
+    float4x4 ModelToWorld;
+    float4 Color;
+};
+StructuredBuffer<InstanceData> g_Instances : register(t243);
 
 struct VSInput
 {
     float3 position : POSITION;
+    uint InstanceID : SV_InstanceID;
 };
 
 struct VSOutput
@@ -36,7 +45,8 @@ VSOutput VertexMain(VSInput input)
 {
     VSOutput output;
 
-    float4 worldPos = mul(ModelToWorldTransform, float4(input.position, 1.0));
+    InstanceData inst = g_Instances[input.InstanceID + InstanceOffset];
+    float4 worldPos = mul(inst.ModelToWorld, float4(input.position, 1.0));
     output.worldPosition = worldPos.xyz;
 
     float4 cameraPos = mul(LightWorldToCamera, worldPos);
@@ -46,7 +56,6 @@ VSOutput VertexMain(VSInput input)
     return output;
 }
 
-// Pixel Shader 输出线性深度
 float PixelMain(VSOutput input) : SV_Depth
 {
     float distance = length(input.worldPosition - LightPosition);

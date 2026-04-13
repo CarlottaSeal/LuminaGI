@@ -29,12 +29,13 @@
 #define REG_VOXEL_LIGHTING_UAV  u376
 #define REG_VISIBILITY_UAV      u377
 
-// SRVs (378-382)
+// SRVs (378-383)
 #define REG_GLOBAL_SDF_SRV      t378
 #define REG_VOXEL_LIGHTING_SRV  t379   // Texture3D
 #define REG_INSTANCE_INFO_SRV   t380   // Buffer
 #define REG_SURFACE_ATLAS_SRV   t381   // Texture2DArray
 #define REG_CARD_METADATA_SRV   t382   // StructuredBuffer
+#define REG_VOXEL_VISIBILITY_SRV t383  // Buffer<uint> - Voxel visibility for early rejection
 
 //=============================================================================
 // Surface Radiosity resources (starting at 385)
