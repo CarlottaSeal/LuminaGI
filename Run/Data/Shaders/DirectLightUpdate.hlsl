@@ -81,6 +81,9 @@ StructuredBuffer<SurfaceCardGPU> CardMetadata : register(t0);
 Texture2DArray<float4> SurfaceAtlas : register(t1);  // Albedo=0, Normal=1, Material=2
 Texture2D<float> ShadowMap : register(t2);
 TextureCubeArray<float> PointLightShadowMaps : register(t3);
+Texture2D<uint> CardIndexLookup : register(t4);  // tile→cardIndex map, 0xFFFFFFFF = empty
+
+static const uint TILE_SIZE = 64;  // must match m_surfaceCache.m_tileSize
 
 RWTexture2DArray<float4> SurfaceAtlasUAV : register(u0);  // Write to DirectLight layer (3)
 
@@ -172,26 +175,12 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
     if (atlasCoord.x >= AtlasWidth || atlasCoord.y >= AtlasHeight)
         return;
 
-    int foundCardIndex = -1;
-    SurfaceCardGPU card;
-
-    for (uint i = 0; i < ActiveCardCount; i++)
-    {
-        SurfaceCardGPU c = CardMetadata[i];
-        uint2 cardMin = uint2(c.AtlasX, c.AtlasY);
-        uint2 cardMax = cardMin + uint2(c.ResolutionX, c.ResolutionY);
-
-        if (atlasCoord.x >= cardMin.x && atlasCoord.x < cardMax.x &&
-            atlasCoord.y >= cardMin.y && atlasCoord.y < cardMax.y)
-        {
-            foundCardIndex = (int)i;
-            card = c;
-            break;
-        }
-    }
-
-    if (foundCardIndex < 0)
+    uint2 tileCoord = atlasCoord / TILE_SIZE;
+    uint cardIdx = CardIndexLookup.Load(int3(tileCoord, 0));
+    if (cardIdx == 0xFFFFFFFF)
         return;
+
+    SurfaceCardGPU card = CardMetadata[cardIdx];
 
     uint2 cardAtlasCoord = uint2(card.AtlasX, card.AtlasY);
     uint2 cardResolution = uint2(card.ResolutionX, card.ResolutionY);

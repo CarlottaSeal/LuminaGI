@@ -62,6 +62,11 @@ private:
 	Vec3 m_orbitCenter;
 	float m_orbitRadius = 2.5f;
 
+	// Card scan test ('T' to toggle)
+	bool m_cardTestActive  = false;
+	int  m_cardTestFrame   = 0;
+	int  m_cardTestPrevIdx = 0;
+
 	std::vector<Vertex_PCU> m_gridVertexes;
 };
 

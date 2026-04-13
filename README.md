@@ -15,7 +15,7 @@ This project is my thesis work at SMU Guildhall.
 - **Signed Distance Field Tracing**: Per-mesh SDF generation (64×64×64 cubic volume) with BVH acceleration; global SDF composition for coarse long-range tracing
 - **Voxel Irradiance Volume**: World-space stable 3D irradiance grid, serving as fallback when mesh SDF misses
 - **Surface Radiosity**: Multi-bounce indirect lighting via 1024x1024 probe grid on the surface cache atlas; L0-L2 SH (9 coefficients/channel) for higher-fidelity directional representation than screen probes; frame-persistent history for temporal coherence
-- **Dynamic Point Lights**: Moving point light support with incremental dirty-card relighting, 128-bit per-card light masks, and distance-priority scheduling
+- **Dynamic Point Lights**: Moving point light support with incremental dirty-card relighting, 128-bit per-card light masks, distance-priority scheduling, and a tile-granularity card index lookup texture (64×64 R32_UINT) that eliminates the O(n) per-thread card search in the DirectLightUpdate shader
 - **Shadow System**: Directional shadow maps (2048x2048, PCF) + omnidirectional point light cube shadows (512x512 x 6 faces, up to 4 lights)
 - **Instanced Indexed Drawing**: Frustum culling, sort-by-material batching, structured buffer instance data
 
@@ -146,6 +146,9 @@ Screen probes store SH2 (4 coefficients/channel, 3 channels = 12 floats/probe). 
 
 **Dirty Card States**
 Two dirty flags per card: geometry-dirty (object moved → full re-render of albedo/normal/material/direct light layers via rasterization) and lighting-dirty (light moved → compute-only direct light update, skipping rasterization entirely). Moving a point light suppresses full card recapture and routes through the compute path only.
+
+**DirectLightUpdate Card Index Lookup**
+The DirectLightUpdate compute pass originally dispatched 512×512 thread groups over the full 4096×4096 atlas, with each thread performing a linear scan through all active card metadata entries to find which card owned its texel. At 372 active cards this produced ~6.2 billion structured buffer reads per dispatch, causing a 33ms single-frame spike on every light update. The fix is a 64×64 `R32_UINT` lookup texture (16 KB) where each texel stores the owning card index for that atlas tile (`0xFFFFFFFF` = empty). Each thread now does a single `Texture2D.Load` at `atlasCoord / 64` instead of the full scan, reducing memory accesses from 6.2B to 16.7M and eliminating the spike.
 
 **Firefly Clamping**
 All pipeline stages clamp output luminance to 1/π (≈ 0.318), the physical maximum of the Lambertian BRDF. This prevents any stage from producing radiance above the diffuse surface limit, eliminating firefly artifacts without an arbitrary threshold.

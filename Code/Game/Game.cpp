@@ -22,6 +22,7 @@
 
 #include "Game/Player.hpp"
 #include "Game/Gamecommon.hpp"
+#include <chrono>
 
 //extern AudioSystem* g_theAudio;
 extern Clock* s_theSystemClock;
@@ -245,7 +246,72 @@ void Game::Update()
 			m_orbitLight->SetPosition(newPos);
 		}
 
-		g_theScene->Update((float)s_theSystemClock->GetDeltaSeconds());
+		// 'T' — toggle incremental card scan test
+		if (g_theApp->WasKeyJustPressed('T'))
+		{
+			m_cardTestActive  = !m_cardTestActive;
+			m_cardTestFrame   = 0;
+			m_cardTestPrevIdx = 0;
+			DebuggerPrintf(m_cardTestActive
+				? "[CardTest] === test START (CARD_SCAN_BATCH=%d) ===\n"
+				: "[CardTest] === test STOP ===\n",
+				g_theScene->CARD_SCAN_BATCH);
+		}
+
+		if (m_cardTestActive && g_theScene)
+		{
+			Scene* sc = g_theScene;
+			bool   jobWasActive = sc->m_cardUpdateJobActive;
+			int    prevIdx      = sc->m_cardUpdateJob.objectIdx;
+			int    totalObjs    = (int)sc->m_cardUpdateJob.objectIDs.size();
+
+			auto t0 = std::chrono::high_resolution_clock::now();
+			g_theScene->Update((float)s_theSystemClock->GetDeltaSeconds());
+			long long us = std::chrono::duration_cast<std::chrono::microseconds>(
+				std::chrono::high_resolution_clock::now() - t0).count();
+
+			bool jobNowActive = sc->m_cardUpdateJobActive;
+			int  newIdx       = sc->m_cardUpdateJob.objectIdx;
+			int  advanced     = newIdx - prevIdx;
+			int  affectedCards = m_orbitLight ? m_orbitLight->GetAffectedCardCount() : -1;
+
+			// Detect if job just completed this frame
+			bool jobJustDone = jobWasActive && !jobNowActive;
+
+			DebuggerPrintf("[CardTest] f=%3d  job=%s  idx=%3d/%-3d  adv=%d  cards=%d  dt=%lld us%s\n",
+				m_cardTestFrame,
+				jobNowActive ? "RUN" : "---",
+				newIdx, totalObjs,
+				advanced,
+				affectedCards,
+				us,
+				jobJustDone ? "  << COMPLETED" : "");
+
+			// Sanity checks
+			if (jobWasActive)
+			{
+				GUARANTEE_OR_DIE(advanced <= g_theScene->CARD_SCAN_BATCH,
+					"Card scan advanced more than CARD_SCAN_BATCH in one frame!");
+			}
+			if (jobJustDone)
+			{
+				GUARANTEE_OR_DIE(affectedCards >= 0,
+					"Job completed but affectedCards not updated!");
+				DebuggerPrintf("[CardTest] Job done: %d affected cards registered.\n", affectedCards);
+			}
+
+			m_cardTestFrame++;
+			if (m_cardTestFrame >= 120)
+			{
+				m_cardTestActive = false;
+				DebuggerPrintf("[CardTest] === test END (120 frames logged) ===\n");
+			}
+		}
+		else
+		{
+			g_theScene->Update((float)s_theSystemClock->GetDeltaSeconds());
+		}
+
 		DebugRenderSystemInputUpdate();
 	}
 
@@ -543,10 +609,13 @@ void Game::DebugRenderSystemInputUpdate()
 	float timeTotal = (float)m_gameClock->GetTotalSeconds();
 	float fps = (float)m_gameClock->GetFrameRate();
 	float timeScale = m_gameClock->GetTimeScale();
-	std::string timeReportHUD = " Time: " + RoundToTwoDecimalsString(timeTotal) 
+	std::string timeReportHUD = " Time: " + RoundToTwoDecimalsString(timeTotal)
 	+ " FPS: " + RoundToOneDecimalString(fps) + " Scale: " + RoundToTwoDecimalsString(timeScale);
 	float textWidth = GetTextWidth(12.f, timeReportHUD, 0.7f);
 	DebugAddScreenText(timeReportHUD, m_screenCamera.GetOrthographicTopRight() - Vec2(textWidth + 1.f, 15.f), 12.f, Vec2::ZERO, 0.f);
+
+	//float frameMs = fps > 0.f ? 1000.f / fps : 999.f;
+	//DebuggerPrintf("[FPS] %6.1f fps  %5.2f ms%s\n", fps, frameMs, frameMs > 20.f ? "  ***SLOW***" : "");
 
 	// Key hints (top-left)
 	float hintSize = 11.f;
