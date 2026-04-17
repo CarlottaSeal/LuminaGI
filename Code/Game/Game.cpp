@@ -614,8 +614,8 @@ void Game::DebugRenderSystemInputUpdate()
 	float textWidth = GetTextWidth(12.f, timeReportHUD, 0.7f);
 	DebugAddScreenText(timeReportHUD, m_screenCamera.GetOrthographicTopRight() - Vec2(textWidth + 1.f, 15.f), 12.f, Vec2::ZERO, 0.f);
 
-	float frameMs = fps > 0.f ? 1000.f / fps : 999.f;
-	DebuggerPrintf("[FPS] %6.1f fps  %5.2f ms%s\n", fps, frameMs, frameMs > 20.f ? "  ***SLOW***" : "");
+	//float frameMs = fps > 0.f ? 1000.f / fps : 999.f;
+	//DebuggerPrintf("[FPS] %6.1f fps  %5.2f ms%s\n", fps, frameMs, frameMs > 20.f ? "  ***SLOW***" : "");
 
 	// Key hints (top-left)
 	float hintSize = 11.f;

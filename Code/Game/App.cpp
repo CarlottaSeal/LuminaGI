@@ -15,10 +15,15 @@
 #include "Game/App.hpp"
 #include "Game/Game.hpp"
 #include "Game/Gamecommon.hpp"
+#include "Game/Player.hpp"
 
 #include "Engine/Renderer/GI/GISystem.h"
 #include "Engine/Scene/Scene.h"
 #include "Engine/Core/AutomatedTesting.hpp"
+
+#define WIN32_LEAN_AND_MEAN
+#include <Windows.h>
+#include <cstdio>
 
 App* g_theApp = nullptr;
 Renderer* g_theRenderer = nullptr;
@@ -226,6 +231,10 @@ void App::HandleQuitRequested()
 // One "frame" of the game.  Generally: Input, Update, Render.  We call this 60+ times per second.
 // #SD1ToDo: Move this function to Game/App.cpp and rename it to  TheApp::RunFrame()
 
+// F9 deferred-capture flag (Update sets; RunFrame consumes post-EndFrame to avoid
+// stomping command list state mid-frame)
+static bool s_f9CapturePending = false;
+
 void App::RunFrame()
 {
 	BeginFrame();
@@ -236,6 +245,33 @@ void App::RunFrame()
 	AutomatedTestingEndFrame();
 	if (AutomatedTestingShouldQuit())
 		HandleQuitRequested();
+
+#ifdef ENGINE_DX12_RENDERER
+	if (s_f9CapturePending && g_theScene && g_theRenderer && g_theWindow && g_theGame)
+	{
+		s_f9CapturePending = false;
+
+		SYSTEMTIME st;
+		GetLocalTime(&st);
+		char stem[64];
+		sprintf_s(stem, sizeof(stem), "manual_%04d%02d%02d_%02d%02d%02d",
+			st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond);
+		CreateDirectoryA("Screenshots", NULL);
+		std::string base     = std::string("Screenshots/") + stem;
+		std::string pngPath  = base + ".png";
+		std::string jsonPath = base + ".json";
+
+		DX12Renderer* sub = g_theRenderer->GetSubRenderer();
+		sub->CaptureScreenshot(pngPath);
+
+		IntVec2 dim = g_theWindow->GetClientDimensions();
+		Camera& worldCam = g_theGame->m_player->m_worldCamera;
+		g_theScene->DumpToJSON(jsonPath, worldCam, dim.x, dim.y);
+
+		DebuggerPrintf("[F9] captured %s (.png + .json) camFov=%.1f tris pending in dump\n",
+			base.c_str(), worldCam.GetPerspectiveFOV());
+	}
+#endif
 }
 
 void App::Update()
@@ -244,6 +280,12 @@ void App::Update()
 	{
 		delete g_theGame;
 		g_theGame = new Game();
+	}
+
+	if (WasKeyJustPressed(KEYCODE_F9))
+	{
+		s_f9CapturePending = true;
+		DebuggerPrintf("[F9] queued manual capture for post-EndFrame\n");
 	}
 
 	g_theGame->Update();
