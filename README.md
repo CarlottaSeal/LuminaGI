@@ -68,7 +68,7 @@ The GI system is implemented in the [Igloo Engine](https://github.com/CarlottaSe
 
 | Pass | Shader | Operation |
 |------|--------|-----------|
-| 1 | ProbePlacement | Reconstruct world position per 8x8 pixel cell |
+| 1 | ProbePlacement | Read world position per 8x8 pixel cell |
 | 2 | BRDFPDFGeneration | Cosine-weighted Lambertian distribution |
 | 3 | LightingPDFGeneration | History reprojection from previous frame |
 | 4 | GenerateSampleDirections | 64 rays/probe via joint BRDF + lighting PDF (0.5/0.5) |
