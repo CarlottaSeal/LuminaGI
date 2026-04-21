@@ -35,6 +35,7 @@ cbuffer VisualizationCB : register(b0)
 
 // Radiosity constants
 // Mode 6 is reserved for Radiosity to avoid conflict with CombinedLight (layer 5)
+#define LAYER_INDIRECT_LIGHT 4
 #define LAYER_RADIOSITY 6
 #define RADIOSITY_PROBE_SPACING 4  // AtlasSize / ProbeGridSize = 4096 / 1024 = 4
 
@@ -233,9 +234,9 @@ float4 PSMain(VSOutput input) : SV_Target0
         uint2 probeCoord = atlasPixel / RADIOSITY_PROBE_SPACING;
         float4 radData = g_RadiosityTraceResult.Load(int3(probeCoord, 0));
 
-        if (radData.w > 0.01)
+        if (dot(radData.rgb, radData.rgb) > 0.00001f)
         {
-            result = radData.rgb;
+            result = radData.rgb * 20.0f;
         }
         else
         {
@@ -253,6 +254,12 @@ float4 PSMain(VSOutput input) : SV_Target0
         {
             float3 n = sampled.rgb * 2.0 - 1.0;
             result = normalize(n) * 0.5 + 0.5;
+        }
+
+        // Indirect light layer is very dim — auto-boost for visibility
+        if (SurfaceCacheLayer == LAYER_INDIRECT_LIGHT)
+        {
+            result *= 20.0f;
         }
     }
 

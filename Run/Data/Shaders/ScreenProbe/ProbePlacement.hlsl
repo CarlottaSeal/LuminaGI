@@ -172,9 +172,8 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
     float4 normalData = NormalBuffer[screenCoord];
     float3 normal = SafeNormalize(normalData.xyz * 2.0f - 1.0f);
 
-    // Reconstruct world position from depth via ScreenUVToWorld
-    float2 screenUV = (float2(screenCoord) + 0.5f) / float2(ScreenWidth, ScreenHeight);
-    float3 worldPos = ScreenUVToWorld(screenUV, depth);
+    // Read world position directly from GBuffer (avoids inverse-projection precision loss)
+    float3 worldPos = WorldPosBuffer[screenCoord].xyz;
 
     // World-space quantization: snap to fixed grid to reduce micro-jitter
     const float GRID_SIZE = 0.5f;  // Quantization grid size (world units)

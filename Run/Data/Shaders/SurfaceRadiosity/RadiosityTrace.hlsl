@@ -110,7 +110,8 @@ void GetRadiosityRay(uint2 tileIndex, uint2 subTilePos, float3 worldNormal, out 
 //=============================================================================
 float SampleGlobalSDF(float3 worldPos)
 {
-    float3 sdfUV = (worldPos - GlobalSDFCenter) / (GlobalSDFExtent * 2.0f) + 0.5f;
+    // Must match BuildGlobalSDF.hlsl: AABB-based UV, not cube-based
+    float3 sdfUV = (worldPos - SceneBoundsMin) / (SceneBoundsMax - SceneBoundsMin);
 
     if (any(sdfUV < 0.0f) || any(sdfUV > 1.0f))
         return TraceMaxDistance;
@@ -135,7 +136,7 @@ bool TraceGlobalSDF(float3 origin, float3 direction, float maxDist, out float hi
             return true;
         }
 
-        t += max(dist, 0.1f);
+        t += max(dist, 0.02f);
 
         if (t > maxDist)
             break;
@@ -304,8 +305,13 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
 
         if (hit)
         {
-            // Sample Voxel Lighting
-            radiance = SampleVoxelLightingAtPosition(hitPos, worldRay);
+            // Quadratic distance fade to suppress corner over-brightening
+            // Reference distance ~5 units (half the short room dimension)
+            float refDist = 5.0f;
+            float normDist = saturate(hitDist / refDist);
+            float distFade = normDist * normDist;
+
+            radiance = SampleVoxelLightingAtPosition(hitPos, worldRay) * distFade;
         }
         else
         {
