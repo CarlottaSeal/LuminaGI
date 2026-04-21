@@ -10,11 +10,10 @@ This project is my thesis work at SMU Guildhall.
 |---|---|
 | ![Direct](screenshots/DirectOnly.png) | ![Final](screenshots/Final.png) |
 
-![Color Bleeding](screenshots/ColorBleeding.png)
-*Multi-bounce color bleeding: indirect light transfers surface color to adjacent geometry*
-
-![Point Light Shadow](screenshots/PLShadow.png)
-*Dynamic point light with omnidirectional cube shadow maps*
+| Color Bleeding | Point Light Shadow |
+|---|---|
+| ![](screenshots/ColorBleeding.png) | ![](screenshots/PLShadow.png) |
+| *Multi-bounce indirect color transfer* | *Omnidirectional cube shadow maps* |
 
 ## Key Features
 
@@ -143,8 +142,6 @@ Measured in windowed mode (~1728x864, 2:1 aspect at 90% of a 1080p desktop) on a
 | &nbsp;&nbsp;Radiance Composite | 0.5 ms |
 | Point Light Cube Shadows | 1.0-2.0 ms |
 | Direct Light Update | 0.2-0.4 ms |
-
-![GPU Timing](screenshots/Fig16_GPU_PerPassTiming.png)
 
 | MeshSDF Normal | Voxel Lighting |
 |---|---|
