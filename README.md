@@ -130,19 +130,6 @@ The GI system is implemented in the [Igloo Engine](https://github.com/CarlottaSe
 
 The test scene consists of a 6x4 grid of floor and ceiling tiles (38 instances of a 12,324-triangle stone tile mesh), 23 perimeter and interior wall segments (43,320 triangles each), and one 49,950-triangle character model: totaling approximately **1.5 million triangles** across **62 mesh instances**.
 
-## Performance
-
-Measured in windowed mode (~1728x864, 2:1 aspect at 90% of a 1080p desktop) on a desktop NVIDIA GPU:
-
-| Component | GPU Time |
-|-----------|----------|
-| Screen Probe Pipeline (total) | ~5.3 ms |
-| &nbsp;&nbsp;Mesh SDF Trace | 2.8 ms |
-| &nbsp;&nbsp;Final Gather | 0.5 ms |
-| &nbsp;&nbsp;Radiance Composite | 0.5 ms |
-| Point Light Cube Shadows | 1.0-2.0 ms |
-| Direct Light Update | 0.2-0.4 ms |
-
 | MeshSDF Normal | Voxel Lighting |
 |---|---|
 | ![](screenshots/MeshSDFNormal.png) | ![](screenshots/VoxelLighting.png) |
