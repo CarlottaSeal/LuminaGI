@@ -1,5 +1,3 @@
-//=============================================================================
-// GIVisualizationSurfaceCache.hlsl
 // VS/PS pass — renders each Card quad onto mesh surfaces via instancing
 //
 // WorldOrigin/AxisX/AxisY/Normal in CardMetadata are already in world space
@@ -7,7 +5,6 @@
 //   localOffset.x = (quadUV.x - 0.5) * Size.x
 //   localOffset.y = (quadUV.y - 0.5) * Size.y
 //   worldPos = WorldOrigin + localOffset.x * AxisX + localOffset.y * AxisY
-//=============================================================================
 
 // Debug display mode (change value and recompile to switch)
 // 0 = Normal render
@@ -88,9 +85,7 @@ struct VSOutput
     float3 DebugAxisY : TEXCOORD3;
 };
 
-//=============================================================================
 // Vertex Shader
-//=============================================================================
 VSOutput VSMain(VSInput input, uint instanceID : SV_InstanceID)
 {
     VSOutput output;
@@ -114,14 +109,12 @@ VSOutput VSMain(VSInput input, uint instanceID : SV_InstanceID)
     float3 axisY = normalize(card.WorldAxisY);
     float2 size = card.WorldSize;
 
-    // =========================================================================
     // World position reconstruction — inverse of CardCapture.hlsl transform
     //
     // Inverse transform (quadUV -> worldPos):
     //   localOffset.x = (quadUV.x - 0.5) * Size.x
     //   localOffset.y = (quadUV.y - 0.5) * Size.y
     //   worldPos = WorldOrigin + localOffset.x * AxisX + localOffset.y * AxisY
-    // =========================================================================
 
     float2 quadUV = input.UV;
     float2 localOffset;
@@ -148,9 +141,7 @@ VSOutput VSMain(VSInput input, uint instanceID : SV_InstanceID)
     return output;
 }
 
-//=============================================================================
 // Pixel Shader
-//=============================================================================
 float4 PSMain(VSOutput input) : SV_Target0
 {
     CardMetadata card = g_CardMetadata[input.CardIndex];

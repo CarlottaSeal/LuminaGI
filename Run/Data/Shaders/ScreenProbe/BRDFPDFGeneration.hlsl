@@ -1,5 +1,3 @@
-//=============================================================================
-// BRDFPDFGeneration.hlsl
 // Pass 6.2: BRDF PDF Generation
 // Compute per-probe Lambertian BRDF PDF, projected to SH2
 //
@@ -9,7 +7,6 @@
 // The SH projection of this distribution is analytic (Zonal Harmonics):
 //   L0: A0 = π
 //   L1: A1 = 2π/3
-//=============================================================================
 
 #include "ScreenProbeCommon.hlsli"
 #include "ScreenProbeSH.hlsli"
@@ -19,10 +16,8 @@ StructuredBuffer<ScreenProbeGPU> ProbeBuffer : register(REG_PROBE_BUFFER_SRV);
 
 RWStructuredBuffer<SH2CoeffsGPU> BRDFPDFOutput : register(REG_BRDF_PDF_UAV);
 
-//=============================================================================
 // Compute SH projection of Lambertian BRDF (clamped cosine lobe)
 // Analytic result — no sampling required
-//=============================================================================
 float4 ProjectLambertianBRDF(float3 normal)
 {
     // Compute SH basis functions for the normal direction
@@ -43,9 +38,7 @@ float4 ProjectLambertianBRDF(float3 normal)
     );
 }
 
-//=============================================================================
 // Main compute shader
-//=============================================================================
 
 [numthreads(8, 8, 1)]
 void main(uint3 dispatchThreadID : SV_DispatchThreadID)

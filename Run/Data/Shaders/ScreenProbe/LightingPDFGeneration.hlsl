@@ -1,9 +1,3 @@
-//=============================================================================
-// LightingPDFGeneration.hlsl
-// Pass 6.3: Lighting PDF Generation
-// Estimate lighting PDF from previous frame's screen radiance
-//=============================================================================
-
 #include "ScreenProbeCommon.hlsli"
 #include "ScreenProbeSH.hlsli"
 #include "ScreenProbeRegisters.hlsli"

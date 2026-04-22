@@ -192,9 +192,7 @@ void CSMain(uint3 dispatchID : SV_DispatchThreadID)
     
     switch (g_Mode)
     {
-        //=================================================================
         // Final Output Modes
-        //=================================================================
         case VIZ_FINAL_LIGHTING:
         {
             if (isSky)
@@ -242,9 +240,7 @@ void CSMain(uint3 dispatchID : SV_DispatchThreadID)
             break;
         }
         
-        //=================================================================
         // GBuffer Modes (5 types)
-        //=================================================================
         case VIZ_GBUFFER_ALBEDO:
         {
             result = albedo;
@@ -276,9 +272,7 @@ void CSMain(uint3 dispatchID : SV_DispatchThreadID)
             break;
         }
         
-        //=================================================================
         // Surface Cache Modes (direct atlas display)
-        //=================================================================
         case VIZ_SURFCACHE_ALBEDO:
         {
             uint2 atlasCoord = pixelCoord % g_AtlasSize;
@@ -318,9 +312,7 @@ void CSMain(uint3 dispatchID : SV_DispatchThreadID)
             break;
         }
         
-        //=================================================================
         // Voxel & Radiosity Modes
-        //=================================================================
         case VIZ_VOXEL_LIGHTING:
         {
             float3 voxelUV = float3(uv, 0.5);
@@ -335,9 +327,7 @@ void CSMain(uint3 dispatchID : SV_DispatchThreadID)
             break;
         }
         
-        //=================================================================
         // Screen Probe Modes
-        //=================================================================
         case VIZ_PROBE_RADIANCE:
         {
             uint2 atlasCoord = GetProbeAtlasCoord(pixelCoord);
@@ -356,9 +346,7 @@ void CSMain(uint3 dispatchID : SV_DispatchThreadID)
             break;
         }
         
-        //=================================================================
         // Other Modes
-        //=================================================================
         case VIZ_SHADOW_MAP:
         {
             float shadowDepth = g_ShadowMap.SampleLevel(g_PointSampler, uv, 0);

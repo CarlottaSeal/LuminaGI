@@ -1,8 +1,3 @@
-//=============================================================================
-// RadiosityTrace.hlsl
-// Surface Radiosity: one ray per pixel
-//=============================================================================
-
 #include "RadiosityCacheCommon.hlsli"
 
 Texture2DArray<float4>              SurfaceCacheAtlas   : register(t0);
@@ -23,9 +18,7 @@ SamplerState LinearSampler  : register(s1);
 #define LAYER_INDIRECT_LIGHT 4
 #define LAYER_COMBINED      5
 
-//=============================================================================
 // Hammersley sequence
-//=============================================================================
 float2 Hammersley16(uint Index, uint NumSamples)
 {
     float E1 = frac((float)Index / NumSamples);
@@ -44,10 +37,8 @@ uint2 GetProbeJitter(uint temporalIndex)
     return uint2(Hammersley16(temporalIndex % MAX_FRAME_ACCUMULATED, MAX_FRAME_ACCUMULATED) * float(PROBE_TEXELS_SIZE));
 }
 
-//=============================================================================
 // SimLumen: Cosine-weighted hemisphere sampling
 // PDF = cos(theta) / PI
-//=============================================================================
 float4 CosineSampleHemisphere(float2 E)
 {
     float Phi = 2.0f * PI * E.x;
@@ -63,9 +54,7 @@ float4 CosineSampleHemisphere(float2 E)
     return float4(H, PDF);
 }
 
-//=============================================================================
 // SimLumen: Frisvad tangent basis
-//=============================================================================
 float3x3 GetTangentBasisFrisvad(float3 TangentZ)
 {
     float3 TangentX;
@@ -87,9 +76,7 @@ float3x3 GetTangentBasisFrisvad(float3 TangentZ)
     return float3x3(TangentX, TangentY, TangentZ);
 }
 
-//=============================================================================
 // GetRadiosityRay — generate ray from pixel position
-//=============================================================================
 void GetRadiosityRay(uint2 tileIndex, uint2 subTilePos, float3 worldNormal, out float3 worldRay, out float pdf)
 {
     // Probe texel center (0.5, 0.5)
@@ -105,9 +92,7 @@ void GetRadiosityRay(uint2 tileIndex, uint2 subTilePos, float3 worldNormal, out 
     worldRay = normalize(worldRay);
 }
 
-//=============================================================================
 // SDF Tracing
-//=============================================================================
 float SampleGlobalSDF(float3 worldPos)
 {
     // Must match BuildGlobalSDF.hlsl: AABB-based UV, not cube-based
@@ -147,9 +132,7 @@ bool TraceGlobalSDF(float3 origin, float3 direction, float maxDist, out float hi
     return false;
 }
 
-//=============================================================================
 // Voxel Lighting sampling — direction-weighted approximation
-//=============================================================================
 float3 SampleVoxelLightingAtPosition(float3 worldPos, float3 rayDir)
 {
     float3 voxelExtent = SceneBoundsMax - SceneBoundsMin;
@@ -209,9 +192,7 @@ float3 SampleVoxelLightingAtPosition(float3 worldPos, float3 rayDir)
     return centerRadiance;
 }
 
-//=============================================================================
 // Get pixel world position and normal
-//=============================================================================
 struct PixelData
 {
     float3 WorldPosition;
@@ -256,9 +237,7 @@ PixelData GetPixelData(uint2 atlasCoord)
     return data;
 }
 
-//=============================================================================
 // Main: one ray per pixel
-//=============================================================================
 [numthreads(16, 16, 1)]
 void main(uint3 dispatchThreadID : SV_DispatchThreadID)
 {

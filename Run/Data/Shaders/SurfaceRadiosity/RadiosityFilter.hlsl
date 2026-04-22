@@ -1,8 +1,3 @@
-//=============================================================================
-// RadiosityFilter.hlsl
-// 2x2 cross-shaped spatial filter (per-pixel)
-//=============================================================================
-
 #include "RadiosityCacheCommon.hlsli"
 
 Texture2D<float4>   TraceRadianceAtlas : register(t20);

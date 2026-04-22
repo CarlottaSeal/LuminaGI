@@ -1,4 +1,3 @@
-//=============================================================================
 #define MAX_CARDS 4096
 
 cbuffer ShadowConstants : register(b5)
@@ -236,7 +235,5 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
         directLight += attenuation * light.Color.rgb * pointShadow;
     }
 
-    float3 finalLight = directLight * albedo.rgb * (1.0 / 3.14159265359);
-
-    SurfaceAtlasUAV[uint3(atlasCoord, DIRECT_LIGHT_LAYER)] = float4(finalLight, 1.0);
+    SurfaceAtlasUAV[uint3(atlasCoord, DIRECT_LIGHT_LAYER)] = float4(directLight, 1.0);
 }

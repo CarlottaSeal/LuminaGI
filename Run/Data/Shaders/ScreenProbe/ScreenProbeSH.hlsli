@@ -1,9 +1,7 @@
 #ifndef SCREENPROBE_SH_HLSLI
 #define SCREENPROBE_SH_HLSLI
 
-//=============================================================================
 // SH constants
-//=============================================================================
 static const float SH_C0 = 0.282095f;    // 1 / (2 * sqrt(PI))
 static const float SH_C1 = 0.488603f;    // sqrt(3) / (2 * sqrt(PI))
 static const float SH_C2_0 = 1.092548f;  // sqrt(15) / (2 * sqrt(PI))
@@ -12,9 +10,7 @@ static const float SH_C2_2 = 0.546274f;  // sqrt(15) / (4 * sqrt(PI))
 
 // PI is already defined in ScreenProbeCommon.hlsli
 
-//=============================================================================
 // 3-band SH struct (9 coefficients per channel)
-//=============================================================================
 struct SH3
 {
     float4 V0;  // L0 + L1 (4 coefficients)
@@ -29,9 +25,7 @@ struct SH3RGB
     SH3 B;
 };
 
-//=============================================================================
 // 2-band SH struct (4 coefficients per channel)
-//=============================================================================
 struct SH2RGB
 {
     float4 R;  // [L0, L1_x, L1_y, L1_z]
@@ -90,9 +84,7 @@ void NormalizeSHRGB(inout SH2RGB sh, float normFactor)
     sh.B *= normFactor;
 }
 
-//=============================================================================
 // 3-band SH basis functions (9 coefficients)
-//=============================================================================
 SH3 SHBasisFunction3(float3 dir)
 {
     SH3 result;
@@ -116,9 +108,7 @@ SH3 SHBasisFunction3(float3 dir)
     return result;
 }
 
-//=============================================================================
 // 2-band SH basis functions (4 coefficients)
-//=============================================================================
 float4 SHBasisFunction2(float3 dir)
 {
     return float4(
@@ -129,9 +119,7 @@ float4 SHBasisFunction2(float3 dir)
     );
 }
 
-//=============================================================================
 // 3-band SH projection
-//=============================================================================
 void ProjectToSH3(float3 dir, float3 radiance, inout SH3RGB sh)
 {
     SH3 basis = SHBasisFunction3(dir);
@@ -149,9 +137,7 @@ void ProjectToSH3(float3 dir, float3 radiance, inout SH3RGB sh)
     sh.B.V2 += basis.V2 * radiance.b;
 }
 
-//=============================================================================
 // 3-band SH dot product (evaluation)
-//=============================================================================
 float DotSH3(SH3 a, SH3 b)
 {
     float result = dot(a.V0, b.V0);
@@ -169,9 +155,7 @@ float3 DotSH3RGB(SH3RGB sh, SH3 basis)
     );
 }
 
-//=============================================================================
 // Diffuse Transfer SH (for irradiance reconstruction)
-//=============================================================================
 SH3 CalcDiffuseTransferSH3(float3 normal, float exponent)
 {
     SH3 result = SHBasisFunction3(normal);
@@ -189,9 +173,7 @@ SH3 CalcDiffuseTransferSH3(float3 normal, float exponent)
     return result;
 }
 
-//=============================================================================
 // 3-band SH normalization
-//=============================================================================
 void NormalizeSH3RGB(inout SH3RGB sh, float normFactor)
 {
     sh.R.V0 *= normFactor;
@@ -207,9 +189,7 @@ void NormalizeSH3RGB(inout SH3RGB sh, float normFactor)
     sh.B.V2 *= normFactor;
 }
 
-//=============================================================================
 // 3-band SH irradiance from direction
-//=============================================================================
 float3 EvaluateIrradianceSH3(SH3RGB sh, float3 direction)
 {
     SH3 diffuseTransfer = CalcDiffuseTransferSH3(direction, 1.0f);
@@ -217,9 +197,7 @@ float3 EvaluateIrradianceSH3(SH3RGB sh, float3 direction)
     return max(irradiance, float3(0, 0, 0));
 }
 
-//=============================================================================
 // 2-band SH operations (compatibility)
-//=============================================================================
 float4 EvaluateSHBasis(float3 direction)
 {
     return SHBasisFunction2(direction);

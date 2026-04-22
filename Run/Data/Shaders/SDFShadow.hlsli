@@ -1,14 +1,7 @@
-//=============================================================================
-// SDFShadow.hlsli
-// SDF-based soft shadows using Global SDF
-//=============================================================================
-
 #ifndef SDF_SHADOW_HLSLI
 #define SDF_SHADOW_HLSLI
 
-//-----------------------------------------------------------------------------
 // Configuration
-//-----------------------------------------------------------------------------
 
 #ifndef SDF_SHADOW_MAX_STEPS
 #define SDF_SHADOW_MAX_STEPS 32
@@ -34,9 +27,7 @@
 #define SDF_SHADOW_HIT_THRESHOLD 0.01f  // Hit threshold
 #endif
 
-//-----------------------------------------------------------------------------
 // Coordinate conversion — consistent with VoxelSDFTrace.hlsl
-//-----------------------------------------------------------------------------
 
 float3 WorldToSDFUV_Shadow(float3 worldPos, float3 sdfCenter, float sdfExtent)
 {
@@ -58,11 +49,9 @@ float SampleSDFDistance(Texture3D<float2> globalSDF, SamplerState sdfSampler,
     return normalizedDist * sdfExtent;
 }
 
-//-----------------------------------------------------------------------------
 // SDF soft shadow trace
 // Based on Inigo Quilez's soft shadow algorithm
 // https://iquilezles.org/articles/rmshadows/
-//-----------------------------------------------------------------------------
 
 float TraceSDFSoftShadow(
     Texture3D<float2> globalSDF,
@@ -148,9 +137,7 @@ float TraceSDFSoftShadowImproved(
     return smoothstep(0.0f, 1.0f, shadow);
 }
 
-//-----------------------------------------------------------------------------
 // Convenience functions
-//-----------------------------------------------------------------------------
 
 // Directional (sun) SDF shadow
 float SampleSDFSunShadow(
@@ -209,9 +196,7 @@ float SampleSDFPointShadow(
     );
 }
 
-//-----------------------------------------------------------------------------
 // Blended shadow — Shadow Map + SDF
-//-----------------------------------------------------------------------------
 
 // Strategy 1: min (safer, prevents light leaking)
 float CombineShadowMin(float shadowMap, float sdfShadow)

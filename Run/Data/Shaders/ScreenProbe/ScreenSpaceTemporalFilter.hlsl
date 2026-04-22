@@ -1,7 +1,3 @@
-//=============================================================================
-// ScreenSpaceTemporalFilter.hlsl - Screen-space temporal denoising
-//=============================================================================
-
 #include "ScreenProbeCommon.hlsli"
 #include "ScreenProbeRegisters.hlsli"
 

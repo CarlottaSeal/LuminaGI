@@ -1,10 +1,3 @@
-//=============================================================================
-// LightingPDFGeneration_Debug.hlsl
-// Pass 6.3: Lighting PDF Generation
-// Sample ambient distribution from VoxelLighting, project to SH2
-// More stable than screen reprojection; no temporal feedback jitter
-//=============================================================================
-
 #include "ScreenProbeCommon.hlsli"
 #include "ScreenProbeSH.hlsli"
 #include "ScreenProbeRegisters.hlsli"

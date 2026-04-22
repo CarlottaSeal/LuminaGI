@@ -1,8 +1,3 @@
-//=============================================================================
-// MeshSDFTrace.hlsl
-// Pass 6.5: Mesh SDF Trace - trace mesh SDF and sample Surface Cache lighting
-//=============================================================================
-
 #include "ScreenProbeCommon.hlsli"
 #include "ScreenProbeRegisters.hlsli"
 
@@ -73,9 +68,7 @@ RWStructuredBuffer<TraceResult> MeshTraceResults : register(REG_MESH_TRACE_UAV);
 SamplerState LinearSampler : register(s1);
 SamplerState PointSampler  : register(s0);
 
-//=============================================================================
 // Voxel Visibility Helpers
-//=============================================================================
 uint GetVisibilityDirectionIndex(float3 direction)
 {
     float3 absDir = abs(direction);
@@ -125,9 +118,7 @@ bool QueryVoxelVisibility(float3 worldPos, float3 rayDir,
     return true;
 }
 
-//=============================================================================
 // SDF Sampling and Tracing
-//=============================================================================
 float SampleMeshSDF(MeshSDFInfoGPU instance, float3 localPos)
 {
     float3 bmin = instance.LocalBoundsMin;

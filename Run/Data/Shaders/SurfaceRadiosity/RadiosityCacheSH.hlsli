@@ -1,14 +1,7 @@
-//=============================================================================
-// RadiosityCacheSH.hlsli
-// Spherical Harmonics — L0 + L1 = 4 basis functions
-//=============================================================================
-
 #ifndef RADIOSITY_CACHE_SH_HLSLI
 #define RADIOSITY_CACHE_SH_HLSLI
 
-//=============================================================================
 // SH basis function coefficients
-//=============================================================================
 
 // L0 (constant term)
 static const float SH_L0 = 0.282095f;  // 1 / (2 * sqrt(PI))
@@ -20,9 +13,7 @@ static const float SH_L1 = 0.488603f;  // sqrt(3) / (2 * sqrt(PI))
 static const float CosineLobeA0 = 3.14159265f;  // PI
 static const float CosineLobeA1 = 2.09439510f;  // 2*PI/3
 
-//=============================================================================
 // SH2 struct
-//=============================================================================
 
 struct SH2RGB
 {
@@ -31,9 +22,7 @@ struct SH2RGB
     float4 B;  // [L0, L1_x, L1_y, L1_z] for Blue
 };
 
-//=============================================================================
 // SH initialization
-//=============================================================================
 
 SH2RGB InitSH()
 {
@@ -44,9 +33,7 @@ SH2RGB InitSH()
     return sh;
 }
 
-//=============================================================================
 // SH evaluation
-//=============================================================================
 
 // Evaluate SH basis functions
 float4 EvaluateSHBasis(float3 direction)
@@ -77,9 +64,7 @@ float3 EvaluateSHRGB(SH2RGB sh, float3 direction)
     );
 }
 
-//=============================================================================
 // SH projection
-//=============================================================================
 
 // Project single-direction radiance onto SH
 void ProjectToSH(float3 direction, float radiance, inout float4 shCoeffs)
@@ -97,9 +82,7 @@ void ProjectToSHRGB(float3 direction, float3 radiance, inout SH2RGB sh)
     sh.B += basis * radiance.b;
 }
 
-//=============================================================================
 // SH normalization
-//=============================================================================
 
 void NormalizeSH(inout float4 shCoeffs, float normFactor)
 {
@@ -113,9 +96,7 @@ void NormalizeSHRGB(inout SH2RGB sh, float normFactor)
     sh.B *= normFactor;
 }
 
-//=============================================================================
 // SH arithmetic
-//=============================================================================
 
 SH2RGB AddSH(SH2RGB a, SH2RGB b)
 {
@@ -144,9 +125,7 @@ SH2RGB LerpSH(SH2RGB a, SH2RGB b, float t)
     return result;
 }
 
-//=============================================================================
 // SH diffuse lighting
-//=============================================================================
 
 float3 SHDiffuse(SH2RGB sh, float3 normal)
 {

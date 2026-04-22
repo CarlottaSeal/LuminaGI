@@ -1,4 +1,3 @@
-
 #define VIZ_FINAL_LIGHTING              0
 #define VIZ_DIRECT_ONLY                 1
 #define VIZ_INDIRECT_ONLY               2
@@ -158,9 +157,7 @@ SamplerComparisonState g_ShadowSampler : register(s2);
 // Output (432)
 RWTexture2D<float4> g_Output : register(u0);
 
-//=============================================================================
 // Helper Functions
-//=============================================================================
 float3 ReconstructWorldPosition(float2 uv, float depth)
 {
     float4 clipPos = float4(uv * 2.0 - 1.0, depth, 1.0);
@@ -624,9 +621,7 @@ float GetSH2Energy(float coeffs[4])
     return abs(coeffs[0]) + (abs(coeffs[1]) + abs(coeffs[2]) + abs(coeffs[3])) * 0.5f;
 }
 
-//=============================================================================
 // Main
-//=============================================================================
 [numthreads(8, 8, 1)]
 void CSMain(uint3 dispatchID : SV_DispatchThreadID)
 {
@@ -653,9 +648,7 @@ void CSMain(uint3 dispatchID : SV_DispatchThreadID)
     
     switch (g_Mode)
     {
-        //=================================================================
         // Output Modes (0-2)
-        //=================================================================
         case VIZ_FINAL_LIGHTING:
         {
             if (isSky)
@@ -712,9 +705,7 @@ void CSMain(uint3 dispatchID : SV_DispatchThreadID)
             break;
         }
         
-        //=================================================================
         // Voxel Lighting (8)
-        //=================================================================
         case VIZ_VOXEL_LIGHTING:
         {
             if (isSky)
@@ -751,9 +742,7 @@ void CSMain(uint3 dispatchID : SV_DispatchThreadID)
             break;
         }
         
-        //=================================================================
         // Radiosity Trace Result (9)
-        //=================================================================
         case VIZ_RADIOSITY_TRACE:
         {
             if (isSky)
@@ -793,9 +782,7 @@ void CSMain(uint3 dispatchID : SV_DispatchThreadID)
             break;
         }
 
-        //=================================================================
         // Screen Probe Modes (10-14)
-        //=================================================================
         case VIZ_SCREEN_PROBE_BRDF_PDF:
         {
             if (isSky)
@@ -951,9 +938,7 @@ void CSMain(uint3 dispatchID : SV_DispatchThreadID)
             break;
         }
         
-        //=================================================================
         // Mesh SDF Normal (15)
-        //=================================================================
         case VIZ_MESH_SDF_NORMAL:
         {
             if (isSky)

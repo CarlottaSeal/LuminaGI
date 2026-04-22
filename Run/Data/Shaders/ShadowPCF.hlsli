@@ -22,9 +22,7 @@ float SampleShadowHard(
     return shadowMap.SampleCmpLevelZero(shadowSampler, shadowCoord.xy, depth);
 }
 
-//-----------------------------------------------------------------------------
 // PCF 3x3
-//-----------------------------------------------------------------------------
 
 float SampleShadowPCF3x3(
     Texture2D<float> shadowMap,
@@ -64,9 +62,7 @@ float SampleShadowPCF3x3(
     return shadow / 9.0f;
 }
 
-//-----------------------------------------------------------------------------
 // PCF 5x5 (recommended default)
-//-----------------------------------------------------------------------------
 
 float SampleShadowPCF5x5(
     Texture2D<float> shadowMap,
@@ -106,9 +102,7 @@ float SampleShadowPCF5x5(
     return shadow / 25.0f;
 }
 
-//-----------------------------------------------------------------------------
 // PCF 7x7 (high quality)
-//-----------------------------------------------------------------------------
 
 float SampleShadowPCF7x7(
     Texture2D<float> shadowMap,
@@ -148,9 +142,7 @@ float SampleShadowPCF7x7(
     return shadow / 49.0f;
 }
 
-//-----------------------------------------------------------------------------
 // Poisson Disk PCF (high quality, more natural soft edges)
-//-----------------------------------------------------------------------------
 
 float SampleShadowPCFPoisson16(
     Texture2D<float> shadowMap,
@@ -191,9 +183,7 @@ float SampleShadowPCFPoisson16(
     return shadow / 16.0f;
 }
 
-//-----------------------------------------------------------------------------
 // Weighted PCF (higher center weight, approximates Gaussian filter)
-//-----------------------------------------------------------------------------
 
 float SampleShadowPCFWeighted(
     Texture2D<float> shadowMap,
@@ -245,9 +235,7 @@ float SampleShadowPCFWeighted(
     return shadow / weightSum;
 }
 
-//-----------------------------------------------------------------------------
 // PCSS (Percentage Closer Soft Shadows) — variable penumbra
-//-----------------------------------------------------------------------------
 
 // Search for average occluder depth
 float FindBlockerDepth(
@@ -336,9 +324,7 @@ float SampleShadowPCSS(
     return shadow / 32.0f;
 }
 
-//-----------------------------------------------------------------------------
 // Convenience wrapper (default PCF 5x5)
-//-----------------------------------------------------------------------------
 
 float SampleShadowPCF(
     Texture2D<float> shadowMap,
@@ -352,9 +338,7 @@ float SampleShadowPCF(
     return SampleShadowPCF5x5(shadowMap, shadowSampler, worldPos, worldNormal, NdotL, lightViewProj, shadowMapSize);
 }
 
-//-----------------------------------------------------------------------------
 // Cascaded Shadow Map sampling
-//-----------------------------------------------------------------------------
 
 int SelectCascade(float viewDepth, float4 cascadeSplits)
 {
@@ -410,9 +394,7 @@ float SampleShadowCSM(
     return shadow / 9.0f;
 }
 
-//-----------------------------------------------------------------------------
 // Debug visualization
-//-----------------------------------------------------------------------------
 
 float3 VisualizeShadowCascade(float viewDepth, float4 cascadeSplits)
 {

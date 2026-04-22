@@ -1,9 +1,3 @@
-//=============================================================================
-// TemporalAccumulation.hlsl
-// Pass 8: Probe-level temporal with conservative blending
-// Uses exponential moving average without reprojection (simpler, more stable)
-//=============================================================================
-
 #include "ScreenProbeCommon.hlsli"
 #include "ScreenProbeRegisters.hlsli"
 

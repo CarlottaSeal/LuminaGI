@@ -1,7 +1,3 @@
-//=============================================================================
-// RadianceComposite.hlsl - Sample lighting and compose probe radiance
-//=============================================================================
-
 #include "ScreenProbeCommon.hlsli"
 #include "ScreenProbeRegisters.hlsli"
 

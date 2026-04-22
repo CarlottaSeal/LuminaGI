@@ -1,8 +1,3 @@
-//=============================================================================
-// VoxelSDFTrace.hlsl
-// Pass 6.5/6.6: Voxel SDF Trace - trace Global SDF and sample VoxelLighting
-//=============================================================================
-
 #include "ScreenProbeCommon.hlsli"
 #include "ScreenProbeRegisters.hlsli"
 

@@ -1,8 +1,3 @@
-//=============================================================================
-// ProbePlacement.hlsl
-// Pass 6.1: Screen Probe Placement - place probes and compute world pos/normal
-//=============================================================================
-
 #include "ScreenProbeCommon.hlsli"
 #include "ScreenProbeRegisters.hlsli"
 
@@ -104,10 +99,8 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
         return;
     }
 
-    // =========================================================================
     // Multi-sample depth; select most representative value to avoid edge popping
     // Sample 3x3 region; use median depth
-    // =========================================================================
     float depths[9];
     int validDepthCount = 0;
 

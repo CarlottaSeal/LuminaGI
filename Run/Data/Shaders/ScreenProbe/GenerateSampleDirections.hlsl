@@ -1,9 +1,3 @@
-//=============================================================================
-// GenerateSampleDirections.hlsl
-// Generate sample directions with combined BRDF and Lighting PDF
-// 2D Dispatch: (ProbeGridWidth, ProbeGridHeight, 1) with [numthreads(8, 8, 1)]
-//=============================================================================
-
 #include "ScreenProbeCommon.hlsli"
 #include "ScreenProbeSH.hlsli"
 #include "ScreenProbeRegisters.hlsli"

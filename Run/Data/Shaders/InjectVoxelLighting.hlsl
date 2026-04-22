@@ -1,7 +1,3 @@
-//=============================================================================
-//Inject SurfaceCache lighting into VoxelLighting
-//=============================================================================
-
 #include "VoxelSceneCommon.hlsli"
 
 RWTexture3D<float4> VoxelLighting : register(u1);

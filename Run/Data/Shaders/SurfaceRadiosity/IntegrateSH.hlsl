@@ -1,8 +1,3 @@
-//=============================================================================
-// IntegrateSH.hlsl
-// Bilinear probe interpolation + diffuse transfer SH + DotSH
-//=============================================================================
-
 #include "RadiosityCacheCommon.hlsli"
 
 Texture2DArray<float4> SurfaceCacheAtlas : register(t0);
@@ -17,9 +12,7 @@ RWTexture2DArray<float4> SurfaceCacheAtlasOutput : register(u0);
 #define LAYER_NORMAL 1
 #define LAYER_INDIRECT_LIGHT 4
 
-//=============================================================================
 // SH structure
-//=============================================================================
 struct FTwoBandSHVector
 {
     float4 V;  // [L0, L1y, L1z, L1x]
@@ -70,9 +63,7 @@ FTwoBandSHVectorRGB AddSH(FTwoBandSHVectorRGB A, FTwoBandSHVectorRGB B)
     return Result;
 }
 
-//=============================================================================
 // SimLumen: CalcDiffuseTransferSH
-//=============================================================================
 FTwoBandSHVector SHBasisFunction(float3 InputVector)
 {
     FTwoBandSHVector Result;
@@ -110,9 +101,7 @@ float3 DotSH_RGB(FTwoBandSHVectorRGB A, FTwoBandSHVector B)
     return Result;
 }
 
-//=============================================================================
 // Main
-//=============================================================================
 [numthreads(16, 16, 1)]
 void main(uint3 dispatchThreadID : SV_DispatchThreadID)
 {

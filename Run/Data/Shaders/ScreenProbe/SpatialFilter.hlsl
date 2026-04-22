@@ -1,8 +1,3 @@
-//=============================================================================
-// SpatialFilter.hlsl
-// 5-neighbor spatial averaging
-//=============================================================================
-
 #include "ScreenProbeCommon.hlsli"
 #include "ScreenProbeRegisters.hlsli"
 

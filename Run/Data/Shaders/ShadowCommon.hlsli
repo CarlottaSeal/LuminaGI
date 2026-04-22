@@ -1,14 +1,7 @@
-//=============================================================================
-// ShadowCommon.hlsli
-// Shadow system common definitions and configuration
-//=============================================================================
-
 #ifndef SHADOW_COMMON_HLSLI
 #define SHADOW_COMMON_HLSLI
 
-//-----------------------------------------------------------------------------
 // Configuration parameters
-//-----------------------------------------------------------------------------
 
 // Shadow map resolution
 #ifndef SHADOW_MAP_SIZE
@@ -50,9 +43,7 @@
 #define CASCADE_COUNT 4
 #endif
 
-//-----------------------------------------------------------------------------
 // Constant buffer definitions
-//-----------------------------------------------------------------------------
 
 // Single-light shadow constants
 struct ShadowConstants
@@ -78,17 +69,13 @@ struct CSMConstants
     float2 Padding;
 };
 
-//-----------------------------------------------------------------------------
 // Samplers (must be declared in the including shader)
-//-----------------------------------------------------------------------------
 
 // The following samplers must be declared in the including shader:
 // SamplerComparisonState g_ShadowSampler : register(s1);
 // SamplerState g_PointSampler : register(s0);
 
-//-----------------------------------------------------------------------------
 // Helper functions
-//-----------------------------------------------------------------------------
 
 // Compute adaptive depth bias
 float CalculateAdaptiveBias(float NdotL, float baseDepth)
@@ -190,9 +177,7 @@ float ShadowEdgeFade(float2 uv)
     return fade.x * fade.y;
 }
 
-//-----------------------------------------------------------------------------
 // Poisson Disk samples (for high-quality PCF/PCSS)
-//-----------------------------------------------------------------------------
 
 static const float2 PoissonDisk16[16] = 
 {
@@ -250,9 +235,7 @@ static const float2 PoissonDisk32[32] =
     float2(0.941635f, 0.195766f)
 };
 
-//-----------------------------------------------------------------------------
 // Random rotation (for sample jitter)
-//-----------------------------------------------------------------------------
 
 // Screen-position-based pseudo-random rotation angle
 float GetRandomRotation(float2 screenPos)
@@ -268,9 +251,7 @@ float2 RotateVector(float2 v, float angle)
     return float2(v.x * c - v.y * s, v.x * s + v.y * c);
 }
 
-//-----------------------------------------------------------------------------
 // Point Light Cube Shadow Map Sampling
-//-----------------------------------------------------------------------------
 
 // Find which shadow slot a given general light ID occupies (-1 if none)
 int GetShadowSlotForLight(int lightIndex, int4 shadowLightIndices, int numShadowLights)

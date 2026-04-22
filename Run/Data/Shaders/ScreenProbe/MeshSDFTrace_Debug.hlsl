@@ -1,8 +1,3 @@
-//=============================================================================
-// MeshSDFTrace.hlsl
-// Per-mesh SDF sphere tracing with per-ray world position
-//=============================================================================
-
 #include "ScreenProbeCommon.hlsli"
 #include "ScreenProbeRegisters.hlsli"
 

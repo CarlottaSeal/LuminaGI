@@ -1,9 +1,6 @@
-//=============================================================================
-// OctIrradiance.hlsl
-// SimLumen-style: Project radiance to SH, then reconstruct irradiance
+// Project radiance to SH, then reconstruct irradiance
 // This acts as a low-pass filter, smoothing out temporal noise
-// One thread per probe (same as SimLumen's LumenScreenProbeConvertToOCT)
-//=============================================================================
+// One thread per probe 
 
 #include "ScreenProbeCommon.hlsli"
 #include "ScreenProbeSH.hlsli"

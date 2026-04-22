@@ -1,8 +1,3 @@
-//=============================================================================
-// ConvertToSH.hlsl
-// Iterate 4x4 pixels per probe; project ray directions onto SH basis
-//=============================================================================
-
 #include "RadiosityCacheCommon.hlsli"
 
 Texture2D<float4> TraceRadianceFiltered : register(t22);
@@ -15,9 +10,7 @@ RWTexture2D<float4> RadiositySH_B : register(u5);
 
 #define LAYER_NORMAL 1
 
-//=============================================================================
 // SH structure
-//=============================================================================
 struct FTwoBandSHVector
 {
     float4 V;  // [L0, L1y, L1z, L1x]
@@ -68,9 +61,7 @@ FTwoBandSHVectorRGB AddSH(FTwoBandSHVectorRGB A, FTwoBandSHVectorRGB B)
     return Result;
 }
 
-//=============================================================================
 // Cosine-weighted hemisphere sampling (for ray direction and PDF)
-//=============================================================================
 float4 CosineSampleHemisphere(float2 E)
 {
     float Phi = 2.0f * PI * E.x;
@@ -121,9 +112,7 @@ void GetRadiosityRay(uint2 tileIndex, uint2 subTilePos, float3 worldNormal, out 
     worldRay = normalize(worldRay);
 }
 
-//=============================================================================
 // Get probe center normal
-//=============================================================================
 float3 GetProbeNormal(uint2 probeStartPos)
 {
     // Use probe center normal
@@ -137,9 +126,7 @@ float3 GetProbeNormal(uint2 probeStartPos)
     return SafeNormalize(normal);
 }
 
-//=============================================================================
 // Main: iterate 4x4 pixels per tile (probe)
-//=============================================================================
 [numthreads(8, 8, 1)]
 void main(uint3 dispatchThreadID : SV_DispatchThreadID)
 {

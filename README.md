@@ -128,7 +128,7 @@ The GI system is implemented in the [Igloo Engine](https://github.com/CarlottaSe
 
 ## Scene Complexity
 
-The test scene consists of a 6x4 grid of floor and ceiling tiles (38 instances of a 12,324-triangle stone tile mesh), 23 perimeter and interior wall segments (43,320 triangles each), and one 49,950-triangle character model: totaling approximately **1.5 million triangles** across **62 mesh instances**.
+The test scene consists of a 6x4 floor grid and a matching ceiling (48 Stone_floor instances, 12,324 triangles each), 12 Floor02_wall segments (43,320 triangles each), and two chess piece models (~2,500 triangles each), across **62 mesh instances**. Frustum culling leaves roughly **1.05 million triangles** drawn per frame.
 
 | MeshSDF Normal | Voxel Lighting |
 |---|---|

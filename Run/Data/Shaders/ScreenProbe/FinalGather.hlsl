@@ -1,7 +1,3 @@
-//=============================================================================
-// FinalGather.hlsl - Bilateral-weighted probe gathering with probe-based AO
-//=============================================================================
-
 #include "ScreenProbeCommon.hlsli"
 #include "ScreenProbeRegisters.hlsli"
 

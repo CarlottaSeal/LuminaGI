@@ -1,16 +1,7 @@
-//=============================================================================
-// ScreenProbeRegisters.hlsli
-// Bindless register layout — UAVs and SRVs in separate contiguous ranges
-//
-// IMPORTANT: must match descriptor indices in RenderCommon.h exactly
-//=============================================================================
-
 #ifndef SCREENPROBE_REGISTERS_HLSLI
 #define SCREENPROBE_REGISTERS_HLSLI
 
-//=============================================================================
 // External resources (from other passes)
-//=============================================================================
 
 // GBuffer (t200-t203)
 #define REG_GBUFFER_ALBEDO      t214
@@ -20,9 +11,7 @@
 // Depth (t218)
 #define REG_DEPTH_BUFFER        t218
 
-//=============================================================================
 // Voxel Scene resources (starting at 375)
-//=============================================================================
 
 // UAVs (375-377)
 #define REG_GLOBAL_SDF_UAV      u375
@@ -37,10 +26,8 @@
 #define REG_CARD_METADATA_SRV   t382   // StructuredBuffer
 #define REG_VOXEL_VISIBILITY_SRV t383  // Buffer<uint> - Voxel visibility for early rejection
 
-//=============================================================================
 // Surface Radiosity resources (starting at 385)
 // UAVs: 385-392, SRVs: 393-400
-//=============================================================================
 
 // UAVs (385-392)
 #define REG_RAD_TRACE_RESULT_UAV   u385
@@ -62,7 +49,6 @@
 #define REG_RAD_PROBE_DEPTH_SRV    t399
 #define REG_RAD_PROBE_NORMAL_SRV   t400
 
-//=============================================================================
 // Screen Probe resources (starting at 400)
 // UAVs: 400-414, SRVs: 415-429
 // UAVs (401-414)
