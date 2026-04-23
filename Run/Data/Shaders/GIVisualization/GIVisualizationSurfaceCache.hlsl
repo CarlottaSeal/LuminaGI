@@ -225,14 +225,7 @@ float4 PSMain(VSOutput input) : SV_Target0
         uint2 probeCoord = atlasPixel / RADIOSITY_PROBE_SPACING;
         float4 radData = g_RadiosityTraceResult.Load(int3(probeCoord, 0));
 
-        if (dot(radData.rgb, radData.rgb) > 0.00001f)
-        {
-            result = radData.rgb * 20.0f;
-        }
-        else
-        {
-            result = float3(0.02, 0.02, 0.03);
-        }
+        result = radData.rgb;
     }
     else
     {
@@ -247,11 +240,7 @@ float4 PSMain(VSOutput input) : SV_Target0
             result = normalize(n) * 0.5 + 0.5;
         }
 
-        // Indirect light layer is very dim — auto-boost for visibility
-        if (SurfaceCacheLayer == LAYER_INDIRECT_LIGHT)
-        {
-            result *= 20.0f;
-        }
+        // (auto-boost for Indirect disabled — showing raw values)
     }
 
     return float4(result * Exposure, edgeAlpha);

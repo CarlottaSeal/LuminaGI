@@ -79,9 +79,8 @@ void CSMain(uint3 dispatchThreadID : SV_DispatchThreadID)
     {
         totalLight /= totalWeight;
 
-        // Temporal accumulation: blend with previous frame to suppress inter-frame noise
         float4 prev = VoxelLighting[voxelCoord];
-        float blend = (prev.a > 0.0) ? 0.02 : 1.0; // First frame: write directly; subsequent: 2% new + 98% history
+        float blend = (prev.a > 0.0) ? 0.02 : 1.0;
         float3 blended = lerp(prev.rgb, totalLight, blend);
         VoxelLighting[voxelCoord] = float4(blended, 1.0);
     }

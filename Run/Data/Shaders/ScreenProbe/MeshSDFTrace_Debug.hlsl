@@ -12,10 +12,10 @@ struct MeshSDFInfoGPU
     float    LocalToWorldScale;
     float3   LocalBoundsMax;
     uint     SDFTextureIndex;
+    float3   WorldBoundsMin;
     uint     CardStartIndex;
+    float3   WorldBoundsMax;
     uint     CardCount;
-    uint     Padding0;
-    uint     Padding1;
 };
 
 struct SurfaceCardMetadata

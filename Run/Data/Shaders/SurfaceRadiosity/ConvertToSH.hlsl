@@ -3,12 +3,14 @@
 Texture2D<float4> TraceRadianceFiltered : register(t22);
 Texture2DArray<float4> SurfaceCacheAtlas : register(t0);
 StructuredBuffer<SurfaceCardMetadata> CardMetadataBuffer : register(t1);
+Texture2D<uint>   CardIndexLookup : register(t12);
 
 RWTexture2D<float4> RadiositySH_R : register(u3);
 RWTexture2D<float4> RadiositySH_G : register(u4);
 RWTexture2D<float4> RadiositySH_B : register(u5);
 
 #define LAYER_NORMAL 1
+static const uint CARD_LOOKUP_TILE_SIZE = 64;
 
 // SH structure
 struct FTwoBandSHVector
@@ -140,7 +142,16 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
 
     uint2 probeStartPos = tileIndex * PROBE_TEXELS_SIZE;
 
-    // Get probe normal
+    // O(1) early-out: skip probes that aren't on any card (majority of atlas).
+    uint2 lookupTile = probeStartPos / CARD_LOOKUP_TILE_SIZE;
+    if (CardIndexLookup.Load(int3(lookupTile, 0)) == 0xFFFFFFFF)
+    {
+        RadiositySH_R[tileIndex] = float4(0, 0, 0, 0);
+        RadiositySH_G[tileIndex] = float4(0, 0, 0, 0);
+        RadiositySH_B[tileIndex] = float4(0, 0, 0, 0);
+        return;
+    }
+
     float3 probeNormal = GetProbeNormal(probeStartPos);
 
     if (dot(probeNormal, probeNormal) < 0.5f)
@@ -151,7 +162,9 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
         return;
     }
 
-    // Initialize SH
+    // Cache tangent basis once — same for all 16 rays of this probe.
+    float3x3 tangentBasis = GetTangentBasisFrisvad(probeNormal);
+
     FTwoBandSHVectorRGB irradianceSH;
     irradianceSH.R.V = float4(0, 0, 0, 0);
     irradianceSH.G.V = float4(0, 0, 0, 0);
@@ -159,9 +172,10 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
 
     uint numValidSamples = 0;
 
-    // Iterate all 4x4 pixels within the probe
+    [unroll]
     for (uint traceIdxY = 0; traceIdxY < PROBE_TEXELS_SIZE; traceIdxY++)
     {
+        [unroll]
         for (uint traceIdxX = 0; traceIdxX < PROBE_TEXELS_SIZE; traceIdxX++)
         {
             uint2 pixelPos = probeStartPos + uint2(traceIdxX, traceIdxY);
@@ -169,16 +183,13 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
             if (pixelPos.x >= AtlasWidth || pixelPos.y >= AtlasHeight)
                 continue;
 
-            // Read pixel radiance
             float3 traceRadiance = TraceRadianceFiltered.Load(int3(pixelPos, 0)).rgb;
 
-            // Get ray direction and PDF for this pixel
-            uint2 subTilePos = uint2(traceIdxX, traceIdxY);
-            float3 worldRay;
-            float pdf;
-            GetRadiosityRay(tileIndex, subTilePos, probeNormal, worldRay, pdf);
+            float2 probeUV = (float2(traceIdxX, traceIdxY) + 0.5f) / float(PROBE_TEXELS_SIZE);
+            float4 raySample = CosineSampleHemisphere(probeUV);
+            float3 worldRay = normalize(mul(raySample.xyz, tangentBasis));
+            float pdf = raySample.w;
 
-            // Project onto SH; divide by PDF
             if (pdf > 0.001f)
             {
                 FTwoBandSHVector basis = SHBasisFunction(worldRay);
@@ -189,13 +200,11 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
         }
     }
 
-    // Normalize
     if (numValidSamples > 0)
     {
         irradianceSH = MulSH_Scalar(irradianceSH, 1.0f / float(numValidSamples));
     }
 
-    // Write SH coefficients
     RadiositySH_R[tileIndex] = irradianceSH.R.V;
     RadiositySH_G[tileIndex] = irradianceSH.G.V;
     RadiositySH_B[tileIndex] = irradianceSH.B.V;

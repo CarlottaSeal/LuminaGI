@@ -2,15 +2,19 @@
 
 Texture2DArray<float4> SurfaceCacheAtlas : register(t0);
 StructuredBuffer<SurfaceCardMetadata> CardMetadataBuffer : register(t1);
+Texture2D<uint>   CardIndexLookup : register(t12);
 
 Texture2D<float4> RadiositySH_R_In : register(t23);
 Texture2D<float4> RadiositySH_G_In : register(t24);
 Texture2D<float4> RadiositySH_B_In : register(t25);
 
+SamplerState LinearSampler_SH : register(s1);
+
 RWTexture2DArray<float4> SurfaceCacheAtlasOutput : register(u0);
 
 #define LAYER_NORMAL 1
 #define LAYER_INDIRECT_LIGHT 4
+static const uint CARD_LOOKUP_TILE_SIZE = 64;
 
 // SH structure
 struct FTwoBandSHVector
@@ -110,66 +114,38 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
     if (pixelCoord.x >= AtlasWidth || pixelCoord.y >= AtlasHeight)
         return;
 
-    // Read pixel normal
+    // O(1) early-out: pixel not on any card.
+    uint2 lookupTile = pixelCoord / CARD_LOOKUP_TILE_SIZE;
+    if (CardIndexLookup.Load(int3(lookupTile, 0)) == 0xFFFFFFFF)
+    {
+        SurfaceCacheAtlasOutput[uint3(pixelCoord, LAYER_INDIRECT_LIGHT)] = float4(0, 0, 0, 0);
+        return;
+    }
+
     float4 normalData = SurfaceCacheAtlas.Load(int4(pixelCoord, LAYER_NORMAL, 0));
     float3 pixelNormal = normalData.xyz * 2.0f - 1.0f;
     pixelNormal = SafeNormalize(pixelNormal);
 
-    // Validity check
     if (length(pixelNormal) < 0.5f)
     {
         SurfaceCacheAtlasOutput[uint3(pixelCoord, LAYER_INDIRECT_LIGHT)] = float4(0, 0, 0, 0);
         return;
     }
 
-    // Compute pixel position in probe grid
-    uint2 tileIndex = pixelCoord / PROBE_TEXELS_SIZE;
-    uint2 subTilePos = pixelCoord % PROBE_TEXELS_SIZE;
+    // Hardware bilinear sample of SH probe grid. Each probe texel covers
+    // PROBE_TEXELS_SIZE atlas pixels, so sample UV = pixel / (tileSize × gridDim).
+    uint probeGridWidth = AtlasWidth / PROBE_TEXELS_SIZE;
+    uint probeGridHeight = AtlasHeight / PROBE_TEXELS_SIZE;
+    float2 probeSampleUV = (float2(pixelCoord) / float(PROBE_TEXELS_SIZE) + 0.5f)
+                           / float2(probeGridWidth, probeGridHeight);
 
-    // Bilinear weights
-    float2 bilinearWeight = float2(subTilePos) / float(PROBE_TEXELS_SIZE);
-    float4 weights = float4(
-        (1.0f - bilinearWeight.x) * (1.0f - bilinearWeight.y),  // 00
-        (1.0f - bilinearWeight.x) * bilinearWeight.y,           // 01
-        bilinearWeight.x * (1.0f - bilinearWeight.y),           // 10
-        bilinearWeight.x * bilinearWeight.y                     // 11
-    );
-
-    // 4 neighboring probe coordinates
-    uint2 probeCoord00 = tileIndex;
-    uint2 probeCoord01 = probeCoord00 + uint2(0, 1);
-    uint2 probeCoord10 = probeCoord00 + uint2(1, 0);
-    uint2 probeCoord11 = probeCoord00 + uint2(1, 1);
-
-    // Load and interpolate SH
     FTwoBandSHVectorRGB irradianceSH;
-    irradianceSH.R.V = float4(0, 0, 0, 0);
-    irradianceSH.G.V = float4(0, 0, 0, 0);
-    irradianceSH.B.V = float4(0, 0, 0, 0);
+    irradianceSH.R.V = RadiositySH_R_In.SampleLevel(LinearSampler_SH, probeSampleUV, 0);
+    irradianceSH.G.V = RadiositySH_G_In.SampleLevel(LinearSampler_SH, probeSampleUV, 0);
+    irradianceSH.B.V = RadiositySH_B_In.SampleLevel(LinearSampler_SH, probeSampleUV, 0);
 
-    FTwoBandSHVectorRGB sh00 = GetRadiosityProbeSH(probeCoord00);
-    FTwoBandSHVectorRGB sh01 = GetRadiosityProbeSH(probeCoord01);
-    FTwoBandSHVectorRGB sh10 = GetRadiosityProbeSH(probeCoord10);
-    FTwoBandSHVectorRGB sh11 = GetRadiosityProbeSH(probeCoord11);
-
-    irradianceSH = AddSH(irradianceSH, MulSH_Scalar(sh00, weights.x));
-    irradianceSH = AddSH(irradianceSH, MulSH_Scalar(sh01, weights.y));
-    irradianceSH = AddSH(irradianceSH, MulSH_Scalar(sh10, weights.z));
-    irradianceSH = AddSH(irradianceSH, MulSH_Scalar(sh11, weights.w));
-
-    // SimLumen: CalcDiffuseTransferSH + DotSH
     FTwoBandSHVector diffuseTransferSH = CalcDiffuseTransferSH(pixelNormal, 1.0f);
     float3 texelIrradiance = max(float3(0, 0, 0), DotSH_RGB(irradianceSH, diffuseTransferSH));
-
-    // Normalize weights
-    float totalWeight = weights.x + weights.y + weights.z + weights.w;
-    if (totalWeight > 0.001f)
-    {
-        texelIrradiance = texelIrradiance / totalWeight;
-    }
-
-    // Note: IndirectIntensity is applied once in FinalGather, not here
-    // Direct output, no clamp
 
     SurfaceCacheAtlasOutput[uint3(pixelCoord, LAYER_INDIRECT_LIGHT)] = float4(texelIrradiance, 0.0f);
 }

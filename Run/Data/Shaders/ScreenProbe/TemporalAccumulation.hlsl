@@ -11,7 +11,7 @@ RWTexture2D<float4> HistoryB_UAV : register(REG_PROBE_RAD_HIST_B_UAV);
 
 StructuredBuffer<ScreenProbeGPU> ProbeBuffer : register(REG_PROBE_BUFFER_SRV);
 
-static const float MAX_RADIANCE = 1.0f / 3.14159265359f;   // SimLumen: 1/PI ≈ 0.318
+static const float MAX_RADIANCE = 1.0f / 3.14159265359f;
 static const float BASE_BLEND = 0.02f;  // 2% new frame - very stable (was 5%)
 
 // Detect camera rotation magnitude — compare current and previous frame view matrices

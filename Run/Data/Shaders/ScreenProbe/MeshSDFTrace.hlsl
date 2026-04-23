@@ -14,10 +14,10 @@ struct MeshSDFInfoGPU
     float    LocalToWorldScale;
     float3   LocalBoundsMax;
     uint     SDFTextureIndex;
+    float3   WorldBoundsMin;
     uint     CardStartIndex;
+    float3   WorldBoundsMax;
     uint     CardCount;
-    uint     Padding0;
-    uint     Padding1;
 };
 
 struct SurfaceCardMetadata
@@ -330,6 +330,9 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
 
     float minStartDistance = MIN_TRACE_START_DISTANCE;
 
+    // Precompute 1/rayDir once for all world-space AABB rejects.
+    float3 invRayDir = 1.0f / rayDir;
+
     if (hasVisibilityHint && hintMeshIndex >= 0 && uint(hintMeshIndex) < MeshInstanceCount)
     {
         MeshSDFInfoGPU instance = InstanceInfos[hintMeshIndex];
@@ -361,6 +364,17 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
         MeshSDFInfoGPU instance = InstanceInfos[meshIndex];
 
         if (instance.SDFTextureIndex >= MAX_SDF_TEXTURES)
+            continue;
+
+        // World-space AABB early reject. Saves the WorldToLocal matrix transform
+        // (~19 muls) and the full sphere trace for instances the ray can't possibly hit.
+        float3 t0 = (instance.WorldBoundsMin - rayOrigin) * invRayDir;
+        float3 t1 = (instance.WorldBoundsMax - rayOrigin) * invRayDir;
+        float3 tNear = min(t0, t1);
+        float3 tFar  = max(t0, t1);
+        float tEnter = max(max(tNear.x, tNear.y), tNear.z);
+        float tExit  = min(min(tFar.x,  tFar.y),  tFar.z);
+        if (tEnter > tExit || tExit < 0.0f || tEnter > closestDist)
             continue;
 
         float hitDist;

@@ -9,11 +9,11 @@ struct MeshSDFInfoGPU
     float3   LocalBoundsMin;
     float    LocalToWorldScale;
     float3   LocalBoundsMax;
-    uint     SDFTextureIndex;   // 4 bytes  - Index into bindless SDF texture array
+    uint     SDFTextureIndex;
+    float3   WorldBoundsMin;
     uint     CardStartIndex;
+    float3   WorldBoundsMax;
     uint     CardCount;
-    uint     Padding0;
-    uint     Padding1;
 };
 
 struct SurfaceCardGPU

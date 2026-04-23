@@ -5,11 +5,14 @@ StructuredBuffer<SurfaceCardMetadata> CardMetadataBuffer : register(t1);
 
 Texture3D<float>    GlobalSDF       : register(t10);
 Texture3D<float4>   VoxelLighting   : register(t11);
+Texture2D<uint>     CardIndexLookup : register(t12);  // tile→card-index, 0xFFFFFFFF = empty
 
 RWTexture2D<float4> TraceRadianceAtlas : register(u0);
 
 SamplerState PointSampler   : register(s0);
 SamplerState LinearSampler  : register(s1);
+
+static const uint CARD_LOOKUP_TILE_SIZE = 64;  // must match m_surfaceCache.m_tileSize
 
 #define LAYER_ALBEDO        0
 #define LAYER_NORMAL        1
@@ -132,64 +135,21 @@ bool TraceGlobalSDF(float3 origin, float3 direction, float maxDist, out float hi
     return false;
 }
 
-// Voxel Lighting sampling — direction-weighted approximation
+// Single trilinear sample with small forward offset along the ray direction.
+// The offset pushes the sample just inside the hit surface so it lands in a
+// lit mesh-interior voxel instead of an adjacent air voxel at the boundary.
 float3 SampleVoxelLightingAtPosition(float3 worldPos, float3 rayDir)
 {
     float3 voxelExtent = SceneBoundsMax - SceneBoundsMin;
-    float3 voxelUV = (worldPos - SceneBoundsMin) / voxelExtent;
+    float3 voxelSize = voxelExtent / float3(GlobalSDFResolution, GlobalSDFResolution, GlobalSDFResolution);
+
+    float3 samplePos = worldPos + rayDir * (length(voxelSize) * 0.75f);
+    float3 voxelUV = (samplePos - SceneBoundsMin) / voxelExtent;
 
     if (any(voxelUV < 0.0f) || any(voxelUV > 1.0f))
         return float3(0, 0, 0);
 
-    // Sample along 3 principal axes; blend by direction weight
-    // 3D texture only (not a 6-direction buffer); offset sampling approximates directionality
-    float3 voxelSize = voxelExtent / float3(GlobalSDFResolution, GlobalSDFResolution, GlobalSDFResolution);
-    float offsetDist = length(voxelSize) * 0.5f;
-
-    // 6 directions
-    float3 directions[6] = {
-        float3(1, 0, 0), float3(-1, 0, 0),
-        float3(0, 1, 0), float3(0, -1, 0),
-        float3(0, 0, 1), float3(0, 0, -1)
-    };
-
-    float3 totalRadiance = float3(0, 0, 0);
-    float totalWeight = 0.0f;
-
-    // Sample center
-    float3 centerRadiance = VoxelLighting.SampleLevel(LinearSampler, voxelUV, 0).rgb;
-
-    // Compute per-direction weight from ray direction
-    for (int i = 0; i < 6; i++)
-    {
-        float weight = saturate(dot(rayDir, directions[i]));
-        if (weight > 0.001f)
-        {
-            // Sample offset along this direction
-            float3 offsetPos = worldPos + directions[i] * offsetDist;
-            float3 offsetUV = (offsetPos - SceneBoundsMin) / voxelExtent;
-
-            if (all(offsetUV >= 0.0f) && all(offsetUV <= 1.0f))
-            {
-                float3 dirRadiance = VoxelLighting.SampleLevel(LinearSampler, offsetUV, 0).rgb;
-                totalRadiance += dirRadiance * weight;
-                totalWeight += weight;
-            }
-            else
-            {
-                // Out of range: fall back to center sample
-                totalRadiance += centerRadiance * weight;
-                totalWeight += weight;
-            }
-        }
-    }
-
-    if (totalWeight > 0.001f)
-    {
-        return totalRadiance / totalWeight;
-    }
-
-    return centerRadiance;
+    return VoxelLighting.SampleLevel(LinearSampler, voxelUV, 0).rgb;
 }
 
 // Get pixel world position and normal
@@ -201,39 +161,38 @@ struct PixelData
     bool Valid;
 };
 
+// O(1) card lookup via precomputed tile → card-index texture.
+// Replaces the old O(ActiveCardCount) linear scan, which was the single largest
+// per-ray cost (one scan per ray × 16M rays per dispatch).
 PixelData GetPixelData(uint2 atlasCoord)
 {
     PixelData data;
     data.Valid = false;
 
-    // Find which Card contains this pixel
-    [loop]
-    for (uint i = 0; i < ActiveCardCount; i++)
-    {
-        SurfaceCardMetadata card = CardMetadataBuffer[i];
+    uint2 tileCoord = atlasCoord / CARD_LOOKUP_TILE_SIZE;
+    uint cardIdx = CardIndexLookup.Load(int3(tileCoord, 0));
+    if (cardIdx == 0xFFFFFFFF)
+        return data;
 
-        if (atlasCoord.x >= card.AtlasX &&
-            atlasCoord.x < card.AtlasX + card.ResolutionX &&
-            atlasCoord.y >= card.AtlasY &&
-            atlasCoord.y < card.AtlasY + card.ResolutionY)
-        {
-            float2 localPixel = float2(atlasCoord) - float2(card.AtlasX, card.AtlasY);
-            float2 uv = (localPixel + 0.5f) / float2(card.ResolutionX, card.ResolutionY);
+    SurfaceCardMetadata card = CardMetadataBuffer[cardIdx];
 
-            data.WorldPosition = card.Origin
-                + card.AxisX * (uv.x - 0.5f) * card.WorldSize.x
-                + card.AxisY * (uv.y - 0.5f) * card.WorldSize.y;
+    if (atlasCoord.x < card.AtlasX || atlasCoord.x >= card.AtlasX + card.ResolutionX ||
+        atlasCoord.y < card.AtlasY || atlasCoord.y >= card.AtlasY + card.ResolutionY)
+        return data;
 
-            float4 normalData = SurfaceCacheAtlas.Load(int4(atlasCoord, LAYER_NORMAL, 0));
-            data.WorldNormal = normalData.xyz * 2.0f - 1.0f;
-            data.WorldNormal = SafeNormalize(data.WorldNormal);
+    float2 localPixel = float2(atlasCoord) - float2(card.AtlasX, card.AtlasY);
+    float2 uv = (localPixel + 0.5f) / float2(card.ResolutionX, card.ResolutionY);
 
-            data.Depth = 1.0f; // Simplified: assume valid
-            data.Valid = true;
-            break;
-        }
-    }
+    data.WorldPosition = card.Origin
+        + card.AxisX * (uv.x - 0.5f) * card.WorldSize.x
+        + card.AxisY * (uv.y - 0.5f) * card.WorldSize.y;
 
+    float4 normalData = SurfaceCacheAtlas.Load(int4(atlasCoord, LAYER_NORMAL, 0));
+    data.WorldNormal = normalData.xyz * 2.0f - 1.0f;
+    data.WorldNormal = SafeNormalize(data.WorldNormal);
+
+    data.Depth = 1.0f;
+    data.Valid = true;
     return data;
 }
 
@@ -257,26 +216,22 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
     uint2 tileIndex = pixelCoord / PROBE_TEXELS_SIZE;
     uint2 subTilePos = pixelCoord % PROBE_TEXELS_SIZE;
 
-    // Hammersley jitter — deterministic sequence, 4-frame cycle
     uint temporalIndex = tileIndex.y * (AtlasWidth / PROBE_TEXELS_SIZE) + tileIndex.x + FrameIndex;
     uint2 probeJitter = GetProbeJitter(temporalIndex);
 
     uint2 probeStartPos = tileIndex * PROBE_TEXELS_SIZE;
     uint2 probeCenterPos = probeStartPos + probeJitter;
 
-    // Get probe center pixel data
     PixelData probeData = GetPixelData(probeCenterPos);
 
     float3 radiance = float3(0, 0, 0);
 
     if (probeData.Valid)
     {
-        // Generate ray for this pixel
         float3 worldRay;
         float pdf;
         GetRadiosityRay(tileIndex, subTilePos, probeData.WorldNormal, worldRay, pdf);
 
-        // SDF trace
         float3 rayOrigin = probeData.WorldPosition + probeData.WorldNormal * RayBias;
         float hitDist;
         float3 hitPos;
@@ -284,13 +239,13 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
 
         if (hit)
         {
-            // Quadratic distance fade to suppress corner over-brightening
-            // Reference distance ~5 units (half the short room dimension)
-            float refDist = 5.0f;
-            float normDist = saturate(hitDist / refDist);
-            float distFade = normDist * normDist;
+            radiance = SampleVoxelLightingAtPosition(hitPos, worldRay);
+            radiance = radiance * (1.0f / PI);
 
-            radiance = SampleVoxelLightingAtPosition(hitPos, worldRay) * distFade;
+            float refDist = TraceMaxDistance * 0.5f;
+            float distRatio = hitDist / refDist;
+            float distAtten = 1.0f / max(1.0f, distRatio * distRatio);
+            radiance *= distAtten;
         }
         else
         {
@@ -301,14 +256,11 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
             }
         }
 
-        // Normalize: divide by PI
-        radiance = radiance * (1.0f / PI);
-
-        // Firefly clamp: limit to 1/PI (Lambertian BRDF maximum)
+        const float MaxRayIntensity = 1.0f / PI;
         float maxLighting = max(radiance.r, max(radiance.g, radiance.b));
-        if (maxLighting > (1.0f / PI))
+        if (maxLighting > MaxRayIntensity)
         {
-            radiance *= (1.0f / PI) / maxLighting;
+            radiance *= MaxRayIntensity / maxLighting;
         }
     }
 
