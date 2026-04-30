@@ -17,7 +17,7 @@ This project is my thesis work at SMU Guildhall.
 
 ## Key Features
 
-- **Screen-Space Probe System**: 11-pass compute pipeline: 240x135 probe grid, 64 rays per probe (~2M rays/frame) sampled via joint BRDF + lighting PDF; temporal blend + bilateral spatial filter weighted by depth and normal
+- **Screen-Space Probe System**: 11-pass compute pipeline: 120x68 probe grid, 64 rays per probe (~0.5M rays/frame) sampled via joint BRDF + lighting PDF; temporal blend + bilateral spatial filter weighted by depth and normal
 - **Surface Cache**: 4096x4096 texture atlas with 6 layers (albedo, normal, material, direct light, indirect light, combined), tile-based allocation (64x64 tiles, up to 4096 cards)
 - **Signed Distance Field Tracing**: Per-mesh SDF generation (64x64x64 cubic volume) with BVH acceleration; global SDF composition (64x64x64) for coarse long-range tracing
 - **Voxel Irradiance Volume**: 64x64x64 world-space stable 3D irradiance grid (RGBA16F), serving as fallback when mesh SDF misses
@@ -67,7 +67,7 @@ The GI system is implemented in the [Igloo Engine](https://github.com/CarlottaSe
 
 | Pass | Shader | Operation |
 |------|--------|-----------|
-| 1 | ProbePlacement | Read world position per 8x8 pixel cell |
+| 1 | ProbePlacement | Read world position per 16x16 pixel cell |
 | 2 | BRDFPDFGeneration | Cosine-weighted Lambertian distribution |
 | 3 | LightingPDFGeneration | History reprojection from previous frame |
 | 4 | GenerateSampleDirections | 64 rays/probe via joint BRDF + lighting PDF (0.5/0.5) |
@@ -190,7 +190,7 @@ All pipeline stages clamp output luminance to 1/pi (approximately 0.318), the ph
 
 - SDF representation cannot accurately capture thin geometry or highly concave surfaces
 - Global SDF at 64x64x64 resolution causes voxel light bleeding through thin walls and coarse gradient normals on small objects
-- Fixed probe density (one per 8x8 pixels) may undersample high-frequency lighting variation
+- Fixed probe density (one per 16x16 pixels) may undersample high-frequency lighting variation
 - Point light shadow maps are hard-limited to 4 simultaneous shadow-casting lights
 - Surface radiosity corner brightening is mitigated but not eliminated by the distance falloff
 
