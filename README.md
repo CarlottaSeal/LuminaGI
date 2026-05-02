@@ -189,7 +189,7 @@ All pipeline stages clamp output luminance to 1/pi (approximately 0.318), the ph
 ## Known Limitations
 
 - SDF representation cannot accurately capture thin geometry or highly concave surfaces
-- Global SDF at 64x64x64 resolution causes voxel light bleeding through thin walls and coarse gradient normals on small objects
+- Global SDF at 64x64x64 resolution produces coarse gradient normals on small objects, and sub-voxel-thickness geometry can still leak light (the trace bias is scaled to half a voxel to bound this)
 - Fixed probe density (one per 16x16 pixels) may undersample high-frequency lighting variation
 - Point light shadow maps are hard-limited to 4 simultaneous shadow-casting lights
 - Surface radiosity corner brightening is mitigated but not eliminated by the distance falloff
