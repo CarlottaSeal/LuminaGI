@@ -24,7 +24,7 @@ This project is my thesis work at SMU Guildhall.
 - **Surface Radiosity**: Multi-bounce indirect lighting via 1024x1024 probe grid on the surface cache atlas; L1 SH (4 coefficients/channel) for compact directional irradiance; amortized execution (every 10 frames) with distance-based falloff to suppress corner over-brightening
 - **Dynamic Point Lights**: Moving point light support with incremental dirty-card relighting, 128-bit per-card light masks, distance-priority scheduling, and a 64x64 R32_UINT **tile→card-index LUT** (16 KB) that replaces an O(n) per-thread linear card search in DirectLightUpdate with a single `Texture2D.Load`, cutting structured-buffer reads from ~6.2B to ~16.7M per dispatch and eliminating a 33 ms single-frame spike on light updates
 - **Shadow System**: Directional shadow maps (2048x2048, 3x3 PCF) + omnidirectional point light cube shadows (512x512 per face, 6 faces per light, up to 4 lights, rendered per-face with separate draw calls)
-- **Instanced Indexed Drawing**: Frustum culling, sort-by-material batching, structured buffer instance data
+- **Instanced Indexed Drawing**: Per-object **CPU frustum culling** via positive-vertex AABB test against Gribb–Hartmann-extracted planes (DX z ∈ [0,1] convention; 6-plane early exit, ~3 mul + 1 dot per plane); culled visible set is sorted by (mesh, material) for maximal instanced batching, with per-instance data uploaded to a structured buffer each frame and a per-draw root constant supplying the instance offset (since the hardware instance index resets to zero per draw call)
 - **GI Visualization System**: 17 runtime debug visualization modes across 5 categories, switchable via ImGui panel
 
 ## Architecture
