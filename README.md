@@ -147,8 +147,30 @@ normal_weight = pow(saturate(dot(n1, n2)), 4.0)
 ```
 Center weight 1.0; neighbors contribute with their bilateral weight. Preserves edges at depth discontinuities and surface orientation boundaries.
 
-**SH Resolution Trade-off**
-Screen probes use L2 SH (9 coefficients/channel) in the OctIrradiance pass for low-pass smoothing. Surface radiosity uses L1 SH (4 coefficients/channel) on the surface cache atlas — sufficient for low-frequency diffuse indirect lighting and cheaper to store/evaluate per atlas texel.
+**Spherical Harmonics**
+LuminaGI uses real-valued SH in three distinct sites with subtly different normalization. The basis convention follows Lumen/UE: the 4-coefficient L1 packing is `[L0, L1y, L1z, L1x]` (Y/Z/X, not the textbook X/Y/Z) with constants
+```
+L0          = 1 / (2·sqrt(pi))         ≈ 0.282095
+L1          = sqrt(3) / (2·sqrt(pi))   ≈ 0.488603
+L1 components = (-L1·y, +L1·z, -L1·x)
+```
+The diffuse-transfer Zonal Harmonics expansion of a clamped cosine lobe (Ramamoorthi-Hanrahan 2001) collapses irradiance reconstruction to a single dot product. For Lambertian (cosine exponent E = 1):
+```
+L0 = 2·pi / (1 + E)                   = pi
+L1 = 2·pi / (2 + E)                   = 2·pi / 3
+L2 = E·2·pi / (3 + 4E + E^2)          = pi / 4
+```
+These are the magic numbers that appear directly in `BRDFPDFGeneration.hlsl` (analytic SH projection, no sampling) and in `CalcDiffuseTransferSH` used by every SH reconstruction site.
+
+**Three SH usage sites:**
+
+1. **`OctIrradiance.hlsl` — L2 screen-probe low-pass (9 coeff/channel).** Projects the 8×8 octahedral radiance map of each probe to 3-band SH, then reconstructs per-direction irradiance as `4·pi · dot(SH, CalcDiffuseTransferSH3(dir, 1.0))`. The leading 4π restores the missing solid-angle weight, since the projection sums `basis · radiance` over the octahedral grid without a per-sample dω. Acts as a low-pass denoiser that preserves the dominant lighting lobe while killing high-frequency noise from sparse ray sampling.
+
+2. **`SurfaceRadiosity/ConvertToSH.hlsl` — L1 radiosity Monte Carlo integration (4 coeff/channel).** Each 4×4 radiosity probe does cosine-weighted hemisphere sampling with `pdf = cos(theta) / pi` and accumulates `basis(ω) · (radiance / pdf)` over 16 rays, then divides by N. This is an unbiased Monte Carlo estimator of the SH projection of radiance over the hemisphere; the `1/pdf` factor already absorbs the solid-angle weight, so reconstruction needs no leading 4π. Per-probe tangent space is built with Frisvad 2012's branchless construction — no `acos` or `cross` needed.
+
+3. **`SurfaceRadiosity/IntegrateSH.hlsl` — L1 atlas reconstruction with hardware-bilinear SH sampling.** For each atlas pixel, the shader hardware-bilinear-samples the three R/G/B SH textures of the radiosity probe grid. Because SH coefficients interpolate linearly, bilinear blending of the coefficients is mathematically identical to bilinear blending of the reconstructed irradiance — but costs three `SampleLevel` calls instead of four full SH reconstructions. Final irradiance is `dot(SH, CalcDiffuseTransferSH(N, 1.0))` with the 2π ZH factors already baked into the diffuse transfer coefficients.
+
+**Why L1 on the surface cache and L2 on the screen probes?** L1 captures the leading directional response of a cosine lobe (one DC term plus a single dominant direction) and fits in one `float4` per channel — required to store SH for every texel of a 4096×4096 atlas. L2 reaches a much closer approximation of the cosine lobe and is affordable at the screen-probe budget of ~120×68 probes. Adding L3 would fall below the noise floor of the screen-space temporal filter.
 
 **Dirty Card States**
 Two dirty flags per card: geometry-dirty (object moved -> full re-render of albedo/normal/material/direct light layers via rasterization) and lighting-dirty (light moved -> compute-only direct light update, skipping rasterization entirely). Moving a point light suppresses full card recapture and routes through the compute path only.
