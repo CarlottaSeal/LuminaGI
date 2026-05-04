@@ -70,14 +70,14 @@ The GI system is implemented in the [Igloo Engine](https://github.com/CarlottaSe
 | 1 | ProbePlacement | Read world position per 16x16 pixel cell |
 | 2 | BRDFPDFGeneration | Cosine-weighted Lambertian distribution |
 | 3 | LightingPDFGeneration | History reprojection from previous frame |
-| 4 | GenerateSampleDirections | 64 rays/probe via joint BRDF + lighting PDF (0.5/0.5) |
+| 4 | GenerateSampleDirections | 64 rays/probe on fixed octahedral grid; per-direction PDF combines BRDF + lighting via MIS power heuristic (β=2) |
 | 5 | MeshSDFTrace | Sphere trace per-mesh SDFs (0-100 units) |
 | 6 | VoxelSDFTrace | Sphere trace global SDF (100-500 units) |
 | 7 | RadianceComposite | Blend voxel + surface cache radiance, 1/pi clamp |
 | 8 | TemporalAccumulation | Exponential moving average with history buffer |
 | 9 | SpatialFilter | 4-neighbor cross-bilateral filter (depth + normal weights) |
 | 9B | OctIrradiance | SH low-pass: L2 projection (9 coeff/channel) + reconstruction |
-| 10 | FinalGather | 4-probe bilinear blend to per-pixel irradiance |
+| 10 | FinalGather | 5-probe bilateral blend (depth + normal weights) to per-pixel irradiance |
 | 11 | ScreenSpaceTemporalFilter | Motion-aware temporal reprojection, 1/pi clamp |
 
 ![Screen Probe Data Flow](screenshots/Fig15_ScreenProbe_DataFlow.png)
@@ -137,7 +137,7 @@ The test scene consists of a 6x4 floor grid and a matching ceiling (48 Stone_flo
 ## Implementation Notes
 
 **Importance Sampling**
-Each screen probe samples 64 ray directions via a joint PDF combining a BRDF term (cosine-weighted Lambertian) and a lighting PDF derived from the previous frame's radiance history. The two terms are weighted equally (0.5/0.5). This reduces variance compared to uniform hemisphere sampling without requiring hardware ray tracing.
+Each screen probe casts 64 rays on a fixed octahedral 8x8 direction grid; the importance information is encoded as a per-direction PDF rather than used to draw the directions. Two PDFs are computed per probe and stored as L1 SH (4 coeff/channel): the **BRDF PDF** is the analytic SH projection of a clamped cosine lobe (Zonal Harmonics, A0=pi, A1=2pi/3), and the **lighting PDF** is built by reprojecting 32 Fibonacci hemisphere samples into the previous frame and SH-projecting cosine-weighted prev-frame luminance. The two are combined per-direction via the **MIS power heuristic (beta=2)**: `combinedPDF = (brdfPdf^3 + lightingPdf^3) / (brdfPdf^2 + lightingPdf^2)`. This reduces variance compared to uniform hemisphere sampling without requiring hardware ray tracing.
 
 **Bilateral Filtering**
 The spatial filter uses a 4-neighbor cross pattern with bilateral weights:
